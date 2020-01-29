@@ -3,7 +3,7 @@ from pyramid.renderers import render_to_response
 from pyramid.response import FileResponse
 import os, json
 from ..models import User, Page
-from . import custom_messages
+from . import custom_messages, valid_extensions
 
 import logging
 log = logging.getLogger(__name__)
@@ -43,11 +43,11 @@ def my_view(request):
         bootstrap = 4
     # some special parts...
     if request.matched_route is None:
-        log.warn(f'Could not match {request.url} for {User.get_username(request)}')
+        log.warning(f'Could not match {request.url} for {User.get_username(request)}')
         page = '404'
         # up the log status if its illegal
     elif request.matched_route.name == 'admin' and (not user or (user and user.role != 'admin')):
-        log.warn(f'Non admin user ({User.get_username(request)}) attempted to view admin page')
+        log.warning(f'Non admin user ({User.get_username(request)}) attempted to view admin page')
         page = request.matched_route.name
     else:
         log.info(f'page {request.matched_route.name} {"("+request.matchdict["id"]+")" if request.matchdict and "id" in request.matchdict else ""} for {User.get_username(request)}')
@@ -62,14 +62,15 @@ def my_view(request):
                 'meta_description': 'Convert PyMOL files, upload PDB files or submit PDB codes and '+\
                                     'create a webpage to edit, share or implement standalone on your site',
                 'meta_image': '/static/tim_barrel.png',
-                'meta_url': 'https://michelanglo.sgc.ox.ac.uk/'
+                'meta_url': 'https://michelanglo.sgc.ox.ac.uk/',
+                'valid_extensions': valid_extensions
             }
     if page == 'docs':
         return route_docs(request, reply)
     elif page == 'gallery':
         reply['pages'] = request.dbsession.query(Page)\
                                                     .filter(Page.privacy != 'private')\
-                                                    .filter(Page.exists == True)\
+                                                    .filter(Page.existant == True)\
                                                     .all()
         reply['sottotitolo'] = 'Here are links to created pages flagged as public'
         return reply
@@ -123,3 +124,7 @@ def status_view(request):
 def favicon_view(request):
     icon = os.path.join("michelanglo_app", "static", "favicon.ico")
     return FileResponse(icon, request=request)
+
+@view_config(route_name="robots", renderer='string')
+def robots(request):
+    return 'User-Agent: *\nDisallow:\nAllow: /'

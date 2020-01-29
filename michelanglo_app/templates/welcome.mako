@@ -41,7 +41,7 @@
         },
         {
            "title": '<i class="far fa-globe-europe"></i> Share',
-            "text": "Edit and share the pages you create. (<a href='/data/LZTR1'>Example</a>)"
+            "text": "Edit and share the pages you create. (<a href='/gallery'>Examples</a>)"
         },
         {
            "title": '<i class="far fa-map-marked-alt"></i> Control',
@@ -50,7 +50,7 @@
         },
         {
            "title": '<i class="far fa-code"></i> Implement',
-            "text": 'Alternatively, follow the instructions to implement the view on your website',
+            "text": 'Alternatively, follow the instructions on the generated page to implement the view on your website.',
 
         },
         {
@@ -59,7 +59,7 @@
         },
         {
            "title": '<i class="far fa-books"></i> More',
-            "text": 'See <a href="/docs">documentation</a> for more information or view <a href="https://youtu.be/v3B3Ok2X5ck">demo video</a>.'
+            "text": 'See <a href="/docs">documentation</a> for more information or view <a href="https://www.youtube.com/playlist?list=PLamYj4DQB9j41viManPI2kG8ViPD5IkLV">demo videos</a>.'
         }
         ]
         #   "title": '<i class="far fa-bolt"></i> NGL powered', "text": 'NGL (<a href="http://nglviewer.org/ngl/api/" target="_blank">nglviewer.org <i class="far fa-external-link"></i></a>) is a JavaScript library that allows the visualisation of protein on the web.'

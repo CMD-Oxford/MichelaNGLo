@@ -4,7 +4,7 @@ __description___ = """
 
 from .uniprot_data import *
 #ProteinCore organism human uniprot2pdb
-from protein import ProteinAnalyser, Mutation, ProteinCore
+from michelanglo_protein import ProteinAnalyser, Mutation, ProteinCore
 
 from ..models import User ##needed solely for log.
 from ._common_methods import is_malformed
@@ -62,7 +62,7 @@ def jsonable(self):
     def deobjectify(x):
         if isinstance(x, dict):
             return {k: deobjectify(x[k]) for k in x}
-        elif isinstance(x, list):
+        elif isinstance(x, list) or isinstance(x, set):
             return [deobjectify(v) for v in x]
         elif isinstance(x, int) or isinstance(x, float):
             return x
@@ -105,20 +105,33 @@ def analyse_view(request):
     def mutation_step():
         handle = request.params['uniprot'] + request.params['mutation']
         if handle not in system_storage:
-            protein_step()
+            status = protein_step()
+            if 'error' in status:
+                return status
         protein = system_storage[handle]
         protein.predict_effect()
-        return {'mutation': {**jsonable(protein.mutation), 'features_near_residue_index': protein.get_features_near_position(protein.mutation.residue_index)},
+        return {'mutation': {**jsonable(protein.mutation),
+                             'features_near_mutation': protein.get_features_near_position(protein.mutation.residue_index),
+                             'position_as_protein_percent': round(protein.mutation.residue_index/len(protein)*100),
+                             'gnomAD_near_mutation': protein.get_gnomAD_near_position()},
                 'status': 'success'}
     ### STEP 3
     def structural_step():
         handle = request.params['uniprot'] + request.params['mutation']
+        if handle not in system_storage:
+            status = protein_step()
+            if 'error' in status:
+                return status
+            status = mutation_step()
+            if 'error' in status:
+                return status
         protein = system_storage[handle]
         try:
             protein.analyse_structure()
-            return {'structural': jsonable(protein.structure), 'status': 'success'}
-        except Exception as err:
-            log.warning(f'Structural analysis failed {err}.')
+            return {'structural': jsonable(protein.structural),
+                    'status': 'success'}
+        except DeprecationWarning as err:  #Exception
+            log.warning(f'Structural analysis failed {err} {type(err).__name__}.')
             return {'status': 'error'}
 
     ### check valid
@@ -139,7 +152,7 @@ def analyse_view(request):
         if handle not in system_storage:
             protein_step()
         protein = system_storage[handle]
-        return render_to_response("../templates/results/features.js.mako", {'protein': protein}, request)
+        return render_to_response("../templates/results/features.js.mako", {'protein': protein, 'featureView': '#fv', 'include_pdb': True}, request)
     else:
         return {'status': 'error', 'error': 'Unknown step'}
 

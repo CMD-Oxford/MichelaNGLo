@@ -6,6 +6,7 @@ from sqlalchemy.sql.expression import and_
 import transaction
 from apscheduler.schedulers.background import BackgroundScheduler
 from .views._common_methods import notify_admin
+from michelanglo_transpiler import GlobalPyMOL
 
 from datetime import datetime,timedelta
 
@@ -23,6 +24,7 @@ def includeme(config):
     scheduler.add_job(kill_task, 'interval', days=1, args=[settings['scheduler.days_delete_unedited'], settings['scheduler.days_delete_untouched']])
     scheduler.add_job(monitor_task, 'interval', days=30)
     scheduler.add_job(daily_task, 'interval', days=1)
+    scheduler.add_job(unjam, 'interval', hours=1)
     #### START UP TASKS ####################################################
     scheduler.add_job(monitor_task, 'date', run_date=datetime.now() + timedelta(minutes=60))
     #scheduler.add_job(sanitycheck_task, 'date', run_date=datetime.now() + timedelta(minutes=2))
@@ -54,12 +56,12 @@ def kill_task(days_delete_unedited, days_delete_untouched):
     with transaction.manager:
         unedited_time = datetime.now() - timedelta(days=int(days_delete_unedited))
         n = 0
-        for page in sesh.query(Page).filter(and_(Page.exists == True, Page.edited == False, Page.timestamp < unedited_time)):
+        for page in sesh.query(Page).filter(and_(Page.existant == True, Page.edited == False, Page.timestamp < unedited_time)):
             log.info(f'Deleting unedited page {page.identifier} by {page}')
             n+=1
             page.delete()
         untouched_time = datetime.now() - timedelta(days=int(days_delete_untouched))
-        for page in sesh.query(Page).filter(and_(Page.exists == True, Page.timestamp < untouched_time)):
+        for page in sesh.query(Page).filter(and_(Page.existant == True, Page.timestamp < untouched_time)):
             if page.protected or sesh.query(Doi).filter(Doi.long == page.identifier).first() is not None:
                 continue
             log.info(f'Deleting abbandonned page {page.identifier} ({page.timestamp})')
@@ -68,7 +70,7 @@ def kill_task(days_delete_unedited, days_delete_untouched):
             except FileNotFoundError:
                 ## file has been deleted manually!?
                 ## this is a pretty major incident.
-                page.exists = False
+                page.existant = False
                 log.warning(f'{page.identifier} does not exist.')
                 notify_admin(f'{page.identifier} does not exist.')
             n+=1
@@ -78,7 +80,7 @@ def kill_task(days_delete_unedited, days_delete_untouched):
 def monitor_task():
     sesh = get_session()
     with transaction.manager:
-        for page in sesh.query(Page).filter(and_(Page.exists == True, Page.protected == True)):
+        for page in sesh.query(Page).filter(and_(Page.existant == True, Page.protected == True)):
             log.info(f'Monitoring {page}.')
             state = []
             try:
@@ -117,3 +119,12 @@ def sanitycheck_task():
     #I need to think about this more.
     pass
 
+def unjam():
+    """
+    The context manager already deals with this. But this is just to prevent the context manager from dealing with this.
+    """
+    gp = GlobalPyMOL()
+    if gp.pylock.acquire(timeout=120):
+        gp.pylock.release()
+    else:
+        gp.kill()

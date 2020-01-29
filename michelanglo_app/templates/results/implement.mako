@@ -66,7 +66,15 @@ Below these add the following to all the custom representation and view of the p
 %>
 <h4>Description</h4>
 Lastly, if you want to use the text you created with all the prolinks add the following:
-<pre style="overflow: scroll; height: 5.5rem;">${copy_btn('desc_code')}<code id="desc_code">${descr_mdowned|n}</code></pre>
+#### The descr_mdowned _has_ to be converted. Do not add the n flag.
+<pre style="overflow: scroll; height: 5.5rem;">
+    ${copy_btn('desc_code')}
+    <code id="desc_code">${descr_mdowned|h}</code></pre>
+<script>
+    new ClipboardJS('#descr_btn', {
+        text: () => $('#desc_code').html()
+    });
+</script>
 <p>Do note that you will need to add style to the <code>class="prolinks"</code>. Within Michelanglo, the style is simply:</p>
 <pre>${copy_btn('green_code')}<code id="green_code">&lt;style>
     .prolink {
@@ -80,7 +88,7 @@ Lastly, if you want to use the text you created with all the prolinks add the fo
     }
 &lt;/style>
 </code></pre>
-<p>But you can do what ever you fancy from a very in teal, mustard or coral to a very 90s web neon green, yellow and pink...</p>
+<p>But you can do what ever you fancy from a very trendy teal, mustard (<code>#ffdb58</code>) or coral to a very 90s-web neon green, yellow and pink &mdash;I hear apricot (<code>#fbceb1</code>) is in this year.</p>
 <!--
 <h3 data-toggle="collapse" data-target=".docs_raw" style="cursor: pointer;">
    <span class="collapse show docs_raw">Show</span>

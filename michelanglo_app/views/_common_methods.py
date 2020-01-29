@@ -1,6 +1,15 @@
-import os, requests, logging, re, unicodedata, uuid
+import os, requests, logging, re, unicodedata, uuid, shutil, json
 from ..models import User, Page
+from michelanglo_transpiler import PyMolTranspiler
+from michelanglo_protein import Structure, global_settings
+from . import valid_extensions
+from .uniprot_data import uniprot2name
+from pyramid.request import Request
 log = logging.getLogger(__name__)
+from typing import Union
+### The latter two are utterly stupid usage.
+from Bio.PDB.MMCIF2Dict import MMCIF2Dict
+import io
 
 ## convert booleans and settings
 def is_js_true(value):
@@ -117,310 +126,7 @@ class PDBMeta:
         elif len(entity['chem_comp_ids']) == 0:
             return True #this entity isnt even a thing
         else:
-            return entity['chem_comp_ids'][0] in ('WAT', 'HOH',  # `TP3` water is ambiguous and rare
-                                                  'LI', 'NA' , 'K', 'RB',  # group 1 cations
-                                                  'BE', 'MG', 'CA', 'SR',  # earth metal cations
-                                                   'F', 'CL', 'BR', 'I',  #halogens
-                                                   'MN', 'FE', 'CO',  'NI', 'CU', 'ZN',  # top period transition metals
-                                                    '3CO',  # cobalt (iii) ion
-                                                  'BUQ',  # 4-hydroxy-2-butanone
-                                                  #'NAG',  # n-acetyl-d-glucosamine
-                                                  #'NAD',  # nicotinamide-adenine-dinucleotide
-                                                  'CR',  # chromium ion
-                                                  #'SF4',  # iron/sulfur cluster
-                                                  'EOH',  # ethanol
-                                                  'ZNO',  # zinc ion, 2 waters coordinated
-                                                  'NAO',  # sodium ion, 1 water coordinated
-                                                  'EOM',  # ethyloxymethoxyl
-                                                  'EHN',  # ethane
-                                                  #'NAP',  # nadp nicotinamide-adenine-dinucleotide phosphate
-                                                  'CCN',  # acetonitrile
-                                                  'NAW',  # sodium ion, 3 waters coordinated
-                                                  'BR',  # bromide ion
-                                                  'EGL',  # ethylene glycol
-                                                  'NI2',  # nickel (ii) ion, 2 waters coordinated
-                                                  #'GSH',  # glutathione
-                                                  'NI1',  # nickel ion, 1 water coordinated
-                                                  #'O2',  # oxygen molecule
-                                                  'BA',  # barium ion
-                                                  'RU',  # ruthenium ion
-                                                  #'SAH',  # s-adenosyl-l-homocysteine
-                                                  'GU7', # 2-amino-7-[2-(2-hydroxy-1-hydroxymethyl-ethylamino)-ethyl]-1,7-dihydro-purin-6-one
-                                                  #'SAM',  # s-adenosylmethionine
-                                                  'TAS',  # trihydroxyarsenite(iii)
-                                                  'DCE',  # 1,2-dichloroethane
-                                                  '2BM',  # dibromomethane
-                                                  #'TP7',  # coenzyme b
-                                                  'OF3',  # ferric ion, 1 water coordinated
-                                                  'OF1',  # ferrous ion, 1 water coordinated
-                                                  'RB',  # rubidium ion
-                                                  'IOH',  # 2-propanol, isopropanol
-                                                  'MW1',  # manganese ion, 1 water coordinated
-                                                  'IOD',  # iodide ion
-                                                  'C2O',  # cu-o-cu linkage
-                                                  'BNZ',  # benzene
-                                                  'TCN',  # tetracyanonickelate ion
-                                                  'ARS',  # arsenic
-                                                  'NH4',  # ammonium ion
-                                                  'GD',  # gadolinium atom
-                                                  #'PER',  # peroxide ion
-                                                  'GA',  # gallium (iii) ion
-                                                  #'TPP',  # thiamine diphosphate
-                                                  'CHX',  # cyclohexane
-                                                  #'CME',  # s,s-(2-hydroxyethyl)thiocysteine
-                                                  #'THB',  # tetrahydrobiopterin
-                                                  'IPA',  # isopropyl alcohol
-                                                  'CD1',  # cadmium ion, 1 water coordinated
-                                                  'OH',  # hydroxide ion
-                                                  'SO4',  # sulfate ion
-                                                  'DTT',  # 2,3-dihydroxy-1,4-dithiobutane
-                                                  #'PQN',  # phylloquinone
-                                                  'CYN',  # cyanide ion
-                                                  #'PQQ',  # pyrroloquinoline quinone
-                                                  'PYJ',  # phenylethane
-                                                  #'PEO',  # hydrogen peroxide
-                                                  'NA6',  # sodium ion, 6 waters coordinated
-                                                  'MBR',  # tribromomethane
-                                                  'NA5',  # sodium ion, 5 waters coordinated
-                                                  'OS',  # osmium ion
-                                                  'MAN',  # alpha-d-mannose
-                                                  'CMO',  # carbon monoxide
-                                                  'OCL',  # cobalt ion, 1 water coordinated
-                                                  'DMF',  # dimethylformamide
-                                                  'OCN',  # cobalt ion, 2 waters coordinated
-                                                  'MO3',  # magnesium ion, 3 waters coordinated
-                                                  'NGN',  # nitrogen
-                                                  'ACT',  # acetate ion
-                                                  'U1',  # uranium atom
-                                                  'HDZ',  # nitrogen molecule
-                                                  'MO5',  # magnesium ion, 5 waters coordinated
-                                                  'MO4',  # magnesium ion, 4 waters coordinated
-                                                  'VO4',  # vanadate ion
-                                                  'DMS',  # dimethyl sulfoxide
-                                                  'FUC',  # alpha-l-fucose
-                                                  'PCL',  # platinum(ii) di-chloride
-                                                  'CB5',  # cobalt bis(1,2-dicarbollide)
-                                                  'EEE',  # ethyl acetate
-                                                  'HG',  # mercury (ii) ion
-                                                  'NO2',  # nitrite ion
-                                                  #'CMP',  # adenosine-3',5'-cyclic-monophosphate
-                                                  'PR',  # praseodymium ion
-                                                  'BMA',  # beta-d-mannose
-                                                  'IUM',  # uranyl (vi) ion
-                                                  'PT',  # platinum (ii) ion
-                                                  'ZN2',  # zinc ion on 3-fold crystal axis
-                                                  #'TTP',  # thymidine-5'-triphosphate
-                                                  'NO3',  # nitrate ion
-                                                  'YT3',  # yttrium (iii) ion
-                                                  #'TYS',  # o-sulfo-l-tyrosine
-                                                  'PB',  # lead (ii) ion
-                                                  'M2M',  # 1-methoxy-2-(2-methoxyethoxy)ethane
-                                                  'ZO3',  # zinc ion, 3 waters coordinated
-                                                  'PD',  # palladium ion
-                                                  #'AMP',  # adenosine monophosphate
-                                                  'PI',  # hydrogenphosphate ion
-                                                  'MH3',  # manganese ion, 1 hydroxyl coordinated
-                                                  'AF3',  # aluminum fluoride
-                                                  'ZN',  # zinc ion
-                                                  'MN3',  # manganese (iii) ion
-                                                  'OXY',  # oxygen molecule
-                                                  'NI',  # nickel (ii) ion
-                                                  #'CSD',  # 3-sulfinoalanine
-                                                  #'OX',  # bound oxygen
-                                                  'PS5',  # pentasulfide-sulfur
-                                                  'MN5',  # manganese ion, 5 waters coordinated
-                                                  'MN6',  # manganese ion, 6 waters coordinated
-                                                  'S',  # sulfur atom
-                                                  'HOH',  # water
-                                                  'W',  # tungsten ion
-                                                  'SB',  # antimony (iii) ion
-                                                  #'FOL',  # folic acid
-                                                  'OXE',  # ortho-xylene
-                                                  'PT4',  # platinum (iv) ion
-                                                  'PBM',  # trimethyl lead ion
-                                                  'O',  # oxygen atom
-                                                  'MW2',  # manganese dihydrate ion
-                                                  'MG',  # magnesium ion
-                                                  '543',  # calcium ion, 6 waters plus ethanol coordinated
-                                                  'MSM',  # (methylsulfanyl)methane
-                                                  #'C5P',  # cytidine-5'-monophosphate
-                                                  'ANL',  # aniline
-                                                  'MTO',  # bound water
-                                                  'NO',  # nitric oxide
-                                                  'TBU',  # tertiary-butyl alcohol
-                                                  'OPY',  # (3s)-4-oxo-4-piperidin-1-ylbutane-1,3-diamine
-                                                  'PC4',  # tetrachloroplatinate(ii)
-                                                  #'GU3',  # methyl 3-o-methyl-2,6-di-o-sulfo-alpha-d-glucopyranoside
-                                                  #'GU2',  # 2,3-di-o-methyl-alpha-l-idopyranuronic acid
-                                                  #'GU1',  # 2,3-di-o-methyl-beta-d-glucopyranuronic acid
-                                                  'MOH',  # methanol
-                                                  #'ANP',  # phosphoaminophosphonic acid-adenylate ester
-                                                  #'GU6',  # 2,3,6-tri-o-sulfonato-alpha-d-glucopyranose
-                                                  #'GU5',  # 2,3-di-o-methyl-6-o-sulfonato-alpha-d-glucopyranose
-                                                  #'GU4',  # 2,3,4,6-tetra-o-sulfonato-alpha-d-glucopyranose
-                                                  'AU',  # gold ion
-                                                  'OC3',  # calcium ion, 3 waters coordinated
-                                                  'BTN',  # biotin
-                                                  'I42',  # hydroxy(dioxido)oxovanadium
-                                                  'OC4',  # calcium ion, 4 waters coordinated
-                                                  'OC7',  # calcium ion, 7 waters coordinated
-                                                  'OC6',  # calcium ion, 6 waters coordinated
-                                                  #'TMP',  # thymidine-5'-phosphate
-                                                  'RE',  # rhenium
-                                                  'GD3',  # gadolinium ion
-                                                  #'CTP',  # cytidine-5'-triphosphate
-                                                  'ACE',  # acetyl group
-                                                  '3OF',  # hydrated fe (iii) ion, 2 waters coordinated
-                                                  'ETZ',  # diethyl ether
-                                                  'MM4',  # molybdenum (iv) oxide
-                                                  'IN',  # indium (iii) ion
-                                                  'ACN',  # acetone
-                                                  'DOD',  # deuterated water
-                                                  'AST',  # arsenite
-                                                  #'COA',  # coenzyme a
-                                                  'EU',  # europium ion
-                                                  'DOX',  # dioxane
-                                                  #'COB',  # co-methylcobalamin
-                                                  #'B12',  # cobalamin
-                                                  'REO',  # perrhenate
-                                                  #'ATP',  # adenosine-5'-triphosphate
-                                                  'CD3',  # cadmium ion, 3 waters coordinated
-                                                  #'U10',  # ubiquinone-10
-                                                  'ACY',  # acetic acid
-                                                  'PEG',  # di(hydroxyethyl)ether
-                                                  'YB',  # ytterbium (iii) ion
-                                                  #'NDP',  # nadph dihydro-nicotinamide-adenine-dinucleotide phosphate
-                                                  'NBZ',  # nitrobenzene
-                                                  'ETI',  # iodoethane
-                                                  'SER',  # serine
-                                                  'C2C',  # cu-cl-cu linkage
-                                                  'NA',  # sodium ion
-                                                  'FMT',  # formic acid
-                                                  'ASC',  # ascorbic acid
-                                                  'AU3',  # gold 3+ ion
-                                                  'FE2',  # fe (ii) ion
-                                                  'LNK',  # pentane
-                                                  'SEK',  # selenocyanate ion
-                                                  'MO1',  # magnesium ion, 1 water coordinated
-                                                  'EU3',  # europium (iii) ion
-                                                  '1BO',  # 1-butanol
-                                                  'AUC',  # gold (i) cyanide ion
-                                                  'CLO',  # chloro group
-                                                  'FE',  # fe (iii) ion
-                                                  'DUM',  # dummy atoms
-                                                  #'ADP',  # adenosine-5'-diphosphate
-                                                  'OF2',  # 2 ferric ion, 1 bridging oxygen
-                                                  'BEF',  # beryllium trifluoride ion
-                                                  'FEL',  # hydrated fe
-                                                  'BF4',  # beryllium tetrafluoride ion
-                                                  'HEX',  # hexane
-                                                  'CUZ',  # (mu-4-sulfido)-tetra-nuclear copper ion
-                                                  #'NDG',  # 2-(acetylamino)-2-deoxy-a-d-glucopyranose
-                                                  'XE',  # xenon
-                                                  #'FMN',  # flavin mononucleotide
-                                                  'YAN',  # 1,2-dichlorobenzene
-                                                  'CUA',  # dinuclear copper ion
-                                                  'V',  # vanadium ion
-                                                  'CUO',  # cu2-o2 cluster
-                                                  #'HEM',  # protoporphyrin ix containing fe
-                                                  #'GMP',  # guanosine
-                                                  'CU',  # copper (ii) ion
-                                                  'MGF',  # trifluoromagnesate
-                                                  #'GDP',  # guanosine-5'-diphosphate
-                                                  'CFT',  # trifluoromethane
-                                                  'SBT',  # 2-butanol
-                                                  #'PLP',  # pyridoxal-5'-phosphate
-                                                  'SR',  # strontium ion
-                                                  'FU1',  # tetrahydrofuran
-                                                  'EDN',  # ethane-1,2-diamine
-                                                  'EDO',  # 1,2-ethanediol
-                                                  'H2S',  # hydrosulfuric acid
-                                                  'ND4',  # ammonium cation with d
-                                                  'BRO',  # bromo group
-                                                  'KR',  # krypton
-                                                  'CS',  # cesium ion
-                                                  'NME',  # methylamine
-                                                  #'CDP',  # cytidine-5'-diphosphate
-                                                  'HGI',  # mercury (ii) iodide
-                                                  'SM',  # samarium (iii) ion
-                                                  #'ALY',  # n(6)-acetyllysine
-                                                  #'NMO',  # nitrogen monoxide
-                                                  #'TDP',  # thiamin diphosphate
-                                                  'SE',  # selenium atom
-                                                  'HO',  # holmium atom
-                                                  '3CN',  # 3-aminopropane
-                                                  'AZI',  # azide ion
-                                                  #'F42',  # coenzyme f420
-                                                  'FLO',  # fluoro group
-                                                  '6MO',  # molybdenum(vi) ion
-                                                  'EMC',  # ethyl mercury ion
-                                                  'Y1',  # yttrium ion
-                                                  #'MO7', # bis(mu4-oxo)-bis(mu3-oxo)-octakis(mu2-oxo)-dodecaoxo-heptamolybdenum (vi)
-                                                  'SE4',  # selenate ion
-                                                  'BF2',  # beryllium difluoride
-                                                  'CO',  # cobalt (ii) ion
-                                                  #'NGD', # 3-(aminocarbonyl)-1-[(2r,3r,4s,5r)-5-({[(s)-{[(s)-{[(2r,3s,4r,5r)-5-(2-amino-6-oxo-1,6-dihydro-9h-purin-9-yl)-3,4-dihydroxytetrahydrofuran-2-yl]methoxy}(hydroxy)phosphoryl]oxy}(hydroxy)phosphoryl]oxy}methyl)-3,4-dihydroxytetrahydrofuran-2-yl]pyridinium
-                                                  '2MO',  # molybdenum (iv)oxide
-                                                  '202',  # bromic acid
-                                                  'DIS',  # disordered solvent
-                                                  'MBN',  # toluene
-                                                  'LA',  # lanthanum (iii) ion
-                                                  'PGO',  # s-1,2-propanediol
-                                                  'CL',  # chloride ion
-                                                  'HP6',  # heptane
-                                                  'SO2',  # sulfur dioxide
-                                                  'LI',  # lithium ion
-                                                  #'PPS',  # 3'-phosphate-adenosine-5'-phosphate sulfate
-                                                  #'TPO',  # phosphothreonine
-                                                  'POL',  # n-propanol
-                                                  #'GU0',  # 2,3,6-tri-o-sulfonato-alpha-l-galactopyranose
-                                                  'SGM',  # monothioglycerol
-                                                  'DTU',  # (2r,3s)-1,4-dimercaptobutane-2,3-diol
-                                                  'MOO',  # molybdate ion
-                                                  'TE',  # tellurium
-                                                  'TB',  # terbium(iii) ion
-                                                  'CA',  # calcium ion
-                                                  #'FAD',  # flavin-adenine dinucleotide
-                                                  'CNV',  # propanenitrile
-                                                  'GOL',  # glycerol
-                                                  'SCN',  # thiocyanate ion
-                                                  'AG',  # silver ion
-                                                  'PO4',  # phosphate ion
-                                                  'IR',  # iridium ion
-                                                  'DIO',  # 1,4-diethylene dioxide
-                                                  'NH2',  # amino group
-                                                  '8CL',  # chlorobenzene
-                                                  '3NI',  # nickel (iii) ion
-                                                  'IRI',  # iridium hexammine ion
-                                                  #'UTP',  # uridine 5'-triphosphate
-                                                  'AR',  # argon
-                                                  #'N4M', # 5-formyltetrahydromethanopterin
-                                                  'CE',  # cerium (iii) ion
-                                                  'NH3',  # ammonia
-                                                  'MN',  # manganese (ii) ion
-                                                  'CNN',  # cyanamide
-                                                  'HGC',  # methyl mercury ion
-                                                  #'GU8',  # 2,3,6-tri-o-methyl-beta-d-glucopyranose
-                                                  #'GTP',  # guanosine-5'-triphosphate
-                                                  #'UDP',  # uridine-5'-diphosphate
-                                                  'OC2',  # calcium ion, 2 waters coordinated
-                                                  'ART',  # arsenate
-                                                  'TFH',  # nitrogen of trifluoro-ethylhydrazine
-                                                  'MCH',  # trichloromethane
-                                                  '2NO',  # nitrogen dioxide
-                                                  '6WO',  # oxo-tungsten(vi)
-                                                  'CD5',  # cadmium ion, 5 waters coordinated
-                                                  #'KCX',  # lysine nz-carboxylic acid
-                                                  'E1H',  # ethanimine
-                                                  'ARF',  # formamide
-                                                  'TL',  # thallium (i) ion
-                                                  'DXE',  # 1,2-dimethoxyethane
-                                                  #'GU9',  # 2,3,6-tri-o-methyl-alpha-d-glucopyranose
-                                                  'IDO',  # iodo group
-                                                  'KO4',  # potassium ion, 4 waters coordinated
-                                                  'NRU',  # ruthenium (iii) hexaamine ion
-                                                  '4MO'  # molybdenum(iv) ion
-                                                  )
+            return entity['chem_comp_ids'][0] in PyMolTranspiler.boring_ligand or entity['chem_comp_ids'][0] in ('WAT', 'HOH', 'TP3')
 
     def wordy_describe(self, delimiter=' + '):
         descr = delimiter.join([self.wordy_describe_entity(entity) for entity in self.get_proteins()])
@@ -434,4 +140,184 @@ class PDBMeta:
         hetero = [(f'{entity["chem_comp_ids"][0]} and :{chain}',
                    "/".join(entity["molecule_name"])) for entity in self.get_nonproteins() for chain in
                   entity["in_chains"] if not self.is_boring_ligand(entity)]
-        return {'peptide': peptide, 'hetero': hetero}
+
+        return {'peptide': peptide, 'hetero': hetero, 'ref': get_references(self.code)}
+
+
+def get_references(code):
+    if len(code) == 0:
+        return ''
+    elif 'swissmodel' in code:
+        return 'Model derived from SWISSMODEL <a href="https://academic.oup.com/nar/article/46/W1/W296/5000024" target="_blank">'+\
+               'Waterhouse, A., Bertoni, M., Bienert, S., Studer, G., Tauriello, G., Gumienny, R., Heer, F.T., de Beer, T.A.P., Rempfer, C., Bordoli, L., Lepore, R., Schwede, T.'+\
+               ' (2018) SWISS-MODEL: homology modelling of protein structures and complexes. <i>Nucleic Acids Res.</i> <b>46(W1)</b>, W296-W303.</a>'
+    else:
+        reply = requests.get(f'https://www.ebi.ac.uk/pdbe/api/pdb/entry/publications/{code}').json()
+        if reply:
+            citations = []
+            for ref in reply[code.lower()]:
+                authors = ', '.join([author["full_name"] for author in ref["author_list"]])
+                if ref["doi"] is None:
+                        continue
+                try:
+                    jname = ref["journal_info"]["ISO_abbreviation"] if ref["journal_info"]["ISO_abbreviation"] is not None else ref["journal_info"]["pdb_abbreviation"]
+                    issue = ref["journal_info"]["issue"] if ref["journal_info"]["issue"] is not None else ''
+                    pages = ref["journal_info"]["pages"] if ref["journal_info"]["pages"] is not None else ''
+                    journal = f'({ref["journal_info"]["year"]}) {ref["title"]} <i>{jname}</i> <b>{issue}</b> {pages}'
+                except:
+                    journal = 'NA'
+                citations.append(f'Structure {code} was reported in <a target="_blank" href="https://dx.doi.org/{ref["doi"]}">{authors} {journal}</a>')
+            return '<br/>'.join(citations)
+        else:
+            return ''
+    
+    
+def save_file(request, extension, field='file'):
+    """
+    Saves the file without doing anything to it.
+    """
+    filename = os.path.join('michelanglo_app', 'temp', '{0}.{1}'.format(get_uuid(request), extension))
+    with open(filename, 'wb') as output_file:
+        if isinstance(request.params[field], str):  ###API user made a mess.
+            log.warning(f'user uploaded a str not a file!')
+            output_file.write(request.params[field].encode('utf-8'))
+        else:
+            request.params[field].file.seek(0)
+            shutil.copyfileobj(request.params[field].file, output_file)
+    return filename
+
+def save_coordinates(request, mod_fx=None):
+    """
+    Saves the request['pdb'] file. Does not accept str.
+    """
+    extension = request.params['pdb'].filename.split('.')[-1]
+    if extension not in valid_extensions:
+        log.warning(f'Odd format in pdb upload: {extension} {valid_extensions}')
+        extension = 'pdb'
+    filename = save_file(request, extension, field='pdb')
+    trans = PyMolTranspiler().load_pdb(file=filename, mod_fx=mod_fx)
+    os.remove(filename)
+    if extension != 'pdb':
+        os.remove(filename.replace(extension, 'pdb'))
+    return trans
+
+def get_chain_definitions(source: Union[Request,str]):
+    """
+    In parts of the code (backend) it is called definition. in the frontend it is descriptions.
+    It accepts either a 4 letter code or a request object.
+    """
+    def get_from_code(code):
+        code = code.split('_')[0]
+        if len(code) == 4:
+            definitions = Structure(id=code, description='', x=0, y=0, code=code).lookup_sifts().chain_definitions
+            for d in definitions:
+                if d['name'] is None and d['uniprot'] in uniprot2name:
+                    d['name'] = uniprot2name[d['uniprot']]
+            return definitions
+        else:
+            return []
+
+    if isinstance(source, str):
+        return get_from_code(source)
+    elif isinstance(source, Request):
+        request = source
+        if 'definitions' in request.params:
+            definitions = json.loads(request.params['definitions'])
+        elif len(request.params['pdb']) == 4:
+            definitions = get_from_code(request.params['pdb'])
+        elif 'format' in request.params and request.params['format'] == 'cif':
+            try:
+                data = MMCIF2Dict(io.StringIO(request.params['pdb']))
+                forced_list = lambda v: v if isinstance(v, list) else [v]
+                chains = forced_list(data['_entity_poly.pdbx_strand_id'])
+                species = forced_list(data['_entity_src_gen.pdbx_gene_src_ncbi_taxonomy_id'])
+                name = forced_list(data['_entity_src_gen.pdbx_gene_src_gene'])
+                details = []
+                for i, c in enumerate(chains):
+                    n = name[i].split(',')[0]
+                    assert species[i].isdigit()
+                    uniprot = json.load(open(os.path.join(global_settings.dictionary_folder, f'taxid{species[i]}-names2uniprot.json')))[n]
+                    for x in c.split(','):
+                        details.append({'chain': x,
+                                        'name': n,
+                                        'offset': 0,
+                                        'uniprot': uniprot})
+                return details
+            except:
+                return []
+        else:
+            #raise ValueError('Neither a pdb code or a definition json')
+            return []
+        return definitions
+    else:
+        raise TypeError
+
+def get_pdb_block_from_str(text):
+    if len(text) == 4:
+        return requests.get(f'https://files.rcsb.org/download/{text.upper()}.pdb').text
+    elif len(text.strip()) == 0:
+        raise ValueError('Empty PDB string?!')
+    elif any([re.match(white, text) for white in ['https://swissmodel.expasy.org', 'https://www.well.ox.ac.uk']]):
+        return requests.get(text).text
+    else:
+        return text
+
+def get_pdb_block_from_request(request):
+    if isinstance(request.params['pdb'], str):  # string
+        text = request.params['pdb']
+        ## see if it's mmCIF
+        if 'format' in request.params:
+            if request.params['format'].lower() == 'pdb':
+                return get_pdb_block_from_str(text)
+            elif request.params['format'].lower() not in valid_extensions:
+                log.warning(f'Odd format in pdb upload: {request.params["format"]} {valid_extensions}')
+                return get_pdb_block_from_str(text)
+            else:  ## mmCIF save_file is abivalent to file or str
+                filename = save_file(request, request.params['format'].lower(), field='pdb')
+                return PyMolTranspiler().load_pdb(file=filename).pdb_block
+        else:
+            return get_pdb_block_from_str(text)
+    elif hasattr(request.params['pdb'], "filename"):  # file
+        return save_coordinates(request).pdb_block  # has its own check to deal with mmCIF.
+    else:
+        raise TypeError
+
+def get_pdb_block(source):
+    """
+    This may do an unneccassry round trip.
+    The output is a PDB block. Do not call if you want to keep using a pdb code.
+    """
+    ##
+    if isinstance(source, str):
+        print('heree!!')
+        text = source
+        return get_pdb_block_from_str(text).replace('`','').replace('\\','')
+    elif isinstance(source, Request):
+        request = source
+        return get_pdb_block_from_request(request).replace('`','').replace('\\','')
+    else:
+        raise TypeError
+
+def get_pdb_code(request):
+    if 'pdb' in request.params:
+        pdb = request.params['pdb']
+        if isinstance(pdb, str):  # string
+            if len(pdb.strip()) == 4:
+                return pdb.strip().upper()
+            elif 'swissmodel' in pdb:
+                return pdb
+        elif hasattr(pdb, "filename"):
+            return os.path.splitext(pdb.filename)[0].strip()
+        else:
+            pass
+    if 'history' in request.params:
+        return json.loads(request.params['history'])['code']
+    return ''
+
+def get_history(request):
+    if 'history' in request.params:
+        history = json.loads(request.params['history'])
+    else:
+        code = get_pdb_code(request)
+        history = {'code': code, 'changes': ''}
+    return history

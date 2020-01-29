@@ -34,17 +34,20 @@ class Page(Base):
         index SERIAL PRIMARY KEY NOT NULL,
         uuid TEXT NOT NULL UNIQUE,
         title TEXT,
-        exists BOOL,
+        existant BOOL,
         edited BOOL,
         encrypted BOOL,
         timestamp TIMESTAMP NOT NULL);
+
+        privacy ought to be an enum... private | public | published | sgc | pinned
+        any change to it need to be changed in gallery.mako
 
         """
     __tablename__ = 'pages'
     id = Column(Integer, primary_key=True)
     identifier = Column(Text, nullable=False, unique=True)
     title = Column(Text, default='')
-    exists = Column(Boolean, default=True)
+    existant = Column(Boolean, default=True)
     edited = Column(Boolean, default=False)
     encrypted = Column(Boolean, default=False)
     timestamp = Column(DateTime, nullable=False) #, default=datetime.datetime.utcnow)
@@ -83,7 +86,7 @@ class Page(Base):
         return self
 
     def load(self):
-        if self.exists:
+        if self.existant:
             if self.encrypted:
                 if self.key:
                     with open(self.path, 'rb') as fh:
@@ -132,7 +135,7 @@ class Page(Base):
                 uncryptic = pickle.dumps(settings)
                 cryptic = self._encrypt(uncryptic)
                 fh.write(cryptic)
-        self.exists = True
+        self.existant = True
         self.title = settings['title'] ## keep synched!
         self.timestamp = datetime.datetime.utcnow()
         return self
@@ -160,12 +163,12 @@ class Page(Base):
         return data[:-padding]  # remove the padding
 
     def delete(self):
-        if self.exists:
+        if self.existant:
             if os.path.exists(self.path):
                 os.remove(self.path)
             else:
                 pass
-            self.exists = False
+            self.existant = False
         else:
             print('DEBUG.... DELETION OF A NON EXISTANT PAGE IS IMPOSSIBLE')
         return self
@@ -228,4 +231,4 @@ class Page(Base):
     def select_list(cls, request, pages):
         """returns the list of existing pages as Page objects from the db"""
         query = request.dbsession.query(cls).filter(cls.identifier.in_(pages)).all()
-        return [page for page in query if page.exists]
+        return [page for page in query if page.existant]

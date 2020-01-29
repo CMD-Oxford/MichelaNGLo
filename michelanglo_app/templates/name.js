@@ -63,6 +63,12 @@ $('#gene').on('keyup', event => {
              method: 'POST',
              success: msg => {
                               if (msg.invalid) {error_gene.show(); gene.addClass('is-invalid')}
+                              else if (msg.species_correction) {ops.addToast('wrongSpecies','Species mismatch', 'The Uniprot ID you entered belongs to a  '+msg.species_correction[0]+' ('+msg.species_correction[1]+'; taxid'+msg.species_correction[2]+'). It has been changed accordingly', 'bg-info');
+                                                                species.val(msg.species_correction[0]);
+                                                                window.taxidValue = msg.species_correction.pop();
+                                                                species.trigger('keyup');
+                                                                setTimeout(() => gene.trigger('keyup'), 500);
+                                                                }
                               else if (msg.options) {
                                    const buttonise = el => `<a href='#' class="list-group-item list-group-item-action" name="genes">${el}</a>`;
                                    let content;
@@ -150,13 +156,30 @@ window.load_pdb = pdb => {
     $('#staging').show();
     window.pdbCode = pdb;
     window.myData = undefined;
+    window.engineered = undefined;
+    window.mode = 'code';
     NGL.stageIds = {};
     $('#viewport').html('');
     $('#viewcode').text('<div role="NGL" data-load="'+pdb+'" ></div>');
     if (pdb.length === 4) {NGL.specialOps.multiLoader('viewport',[{'type': 'rcsb','value': pdb}]);  $('#model_alert').removeClass('show').hide();}
-    else {NGL.specialOps.multiLoader('viewport',[{'type': 'file','value': pdb}]); $('#model_alert').addClass('show').show();}
+    else if (pdb.match('https://swissmodel.expasy.org/repository/') !== null) {
+            $('#model_alert').addClass('show').show();
+            NGL.specialOps.multiLoader('viewport',[{type: 'file',
+                                                                'value': pdb,
+                                                                chain_definitions: [{chain: 'A',
+                                                                                     uniprot: pdb.match(/uniprot\/(.*?)\.pdb/)[1],
+                                                                                     x: pdb.match(/from\=(.*?)\&/)[1],
+                                                                                     y: pdb.match(/to\=(.*?)\&/)[1],
+                                                                                     name: $('#gene').val(),
+                                                                                     offset: 0
+                                                                                    }
+                                                                                    ]
+                                                                }]);
+        }
+    else { NGL.specialOps.multiLoader('viewport',[{type: 'file', 'value': pdb}]); }
     NGL.specialOps.showTitle('viewport', 'Loaded: '+ pdb);
     renumber_alerter(pdb);
+    naturalise_alerter(pdb);
     interactive_builder();
     if ($('#staging').length) $('html, body').animate({scrollTop: $('#staging').offset().top}, 2000);
 };

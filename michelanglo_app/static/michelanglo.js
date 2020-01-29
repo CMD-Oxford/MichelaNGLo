@@ -63,6 +63,8 @@ NGL.getStage = function (id) {
 
 ///////////////////////////// NGL.SpecialOps ///////////////
 
+NGL.specialOps.isValid = (id, sele) => NGL.getStage(id).getComponentByType('structure').structure.getView(new NGL.Selection(sele)).atomCount > 0;
+
 NGL.specialOps.slowOrient = function (id, view) {
     //wrapper for a string view.
     NGL.getStage(id).getComponentByType('structure').autoView(2000); //zoom out.
@@ -223,8 +225,8 @@ NGL.specialOps.showBlur = function (id,selection, color, radius, view, scale, la
     NGL.getStage(id).removeClashes();
     protein.removeAllRepresentations();
     let bfactors = protein.structure.atomStore.bfactor;
-    console.log(scale);
-    console.log(bfactors.length / bfactors.reduce((a,b)=> a+b, 0));
+    //console.log(scale);
+    //console.log(bfactors.length / bfactors.reduce((a,b)=> a+b, 0));
     scale = scale || bfactors.length / bfactors.reduce((a,b)=> a+b, 0);
   protein.addRepresentation("tube", {
     sele: "polymer",
@@ -314,7 +316,7 @@ NGL.specialOps.load = function (option, noLoadFun) {
         NGL.stageIds[myData.id] = new NGL.Stage( "viewport",{backgroundColor: myData.backgroundColor});
         window.addEventListener( "resize", function( event ){NGL.stageIds[myData.id].handleResize();}, false );
     } else { //tabula rasa!
-        NGL.stageIds[myData.id].removeAllComponents();
+        NGL.getStage(myData.id).removeAllComponents();
     }
     //new model. Force reset
     if (myData.proteins[index].type === 'file') {

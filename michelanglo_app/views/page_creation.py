@@ -1,21 +1,25 @@
 from pyramid.view import view_config
-from pyramid.renderers import render_to_response
-import traceback
 from ..models import Page, User
 from ..models.trashcan import get_trashcan
-from protein import Structure
-from ..transplier import PyMolTranspiler, PyMolTranspilerDeco
-import uuid
-import shutil
+from michelanglo_transpiler import PyMolTranspiler
 import os
 import io
 import re
 import json
-import requests
+
 
 PyMolTranspiler.tmp = os.path.join('michelanglo_app', 'temp')
 
-from ._common_methods import is_js_true, is_malformed, PDBMeta, get_uuid
+from ._common_methods import is_js_true,\
+                             is_malformed,\
+                             PDBMeta,\
+                             get_uuid, \
+                             save_file,\
+                             save_coordinates,\
+                             get_chain_definitions, \
+                             get_history, \
+                             get_references, \
+                             get_pdb_block
 import logging
 
 log = logging.getLogger(__name__)
@@ -30,18 +34,6 @@ def demo_file(request):
         return os.path.join('michelanglo_app', 'demo', request.params['demo_filename'])
     else:
         raise Exception('Non existant demo file requested. Possible attack!')
-
-
-def save_file(request, extension, field='file'):
-    filename = os.path.join('michelanglo_app', 'temp', '{0}.{1}'.format(get_uuid(request), extension))
-    with open(filename, 'wb') as output_file:
-        if isinstance(request.params[field], str):  ###API user made a mess.
-            log.warning(f'user uploaded a str not a file!')
-            output_file.write(request.params[field].encode('utf-8'))
-        else:
-            request.params[field].file.seek(0)
-            shutil.copyfileobj(request.params[field].file, output_file)
-    return filename
 
 
 ########################################################################################
@@ -71,7 +63,9 @@ def stringify_protein_description(settings):
                     else:
                         descr += '* ' + template.format(focus='residue', selection=p, label=p) + '\n'
         if 'text' in settings['descriptors'] and settings['descriptors']['text']:
-            descr += settings['descriptors']['text']
+            descr += '\n\n' + settings['descriptors']['text']
+        if 'ref' in settings['descriptors'] and settings['descriptors']['ref']:
+            descr += '\n### References\n'+settings['descriptors']['ref']
     return descr
 
 
@@ -121,7 +115,7 @@ def convert_pse(request):
             return {'status': malformed}
         if 'demo_filename' not in request.params and 'file' not in request.params:
             request.response.status = 422
-            log.warn(f'{User.get_username(request)} malformed request due to missing demo_filename or file')
+            log.warning(f'{User.get_username(request)} malformed request due to missing demo_filename or file')
             return f'Missing field (either demo_filename or file are compulsory)'
         ## set settings
         settings = {'viewport': 'viewport',  # 'tabbed': int(request.params['indent']),
@@ -151,9 +145,13 @@ def convert_pse(request):
             if malformed:
                 return {'status': malformed}
             filename = save_file(request, 'pse')
-        trans = PyMolTranspiler(file=filename, job=User.get_username(request), **settings)
-        if mode == 'demo' or not is_js_true(request.params[
-                                                'pdb']):  ## pdb_string checkbox is true means that it adds the coordinates in the JS and not pdb code is given
+        ### GO!
+        log.debug('About to call the transpiler!')
+        log.debug(filename)
+        trans = PyMolTranspiler(job=User.get_username(request)).transpile(file=filename, **settings)
+        ### finish up
+        if mode == 'demo' or not is_js_true(request.params['pdb']):
+            ## pdb_string checkbox is true means that it adds the coordinates in the JS and not pdb code is given
             with open(os.path.join(trans.tmp, os.path.split(filename)[1].replace('.pse', '.pdb'))) as fh:
                 trans.raw_pdb = fh.read()
         else:
@@ -173,7 +171,13 @@ def convert_pse(request):
             settings['pdb'] = [
                 ('pdb', '\n'.join(trans.ss) + '\n' + trans.raw_pdb)]  # note that this used to be a string,
         elif len(trans.pdb) == 4:
-            settings['proteinJSON'] = '[{{"type": "rcsb", "value": "{0}", "loadFx": "loadfun"}}]'.format(trans.pdb)
+            settings['descriptors']['ref'] = get_references(trans.pdb)
+            settings['proteinJSON'] = json.dumps([{"type": "rcsb",
+                                                   "value": trans.pdb,
+                                                   "loadFx": "loadfun",
+                                                   'history': 'from PyMOL',
+                                                   "chain_definitions": get_chain_definitions(request)
+                                                   }])
         else:
             settings['proteinJSON'] = '[{{"type": "file", "value": "{0}", "loadFx": "loadfun"}}]'.format(trans.pdb)
         settings['title'] = 'User submitted structure (from PyMOL file)'
@@ -219,137 +223,84 @@ def convert_mesh(request):
 @view_config(route_name='convert_pdb', renderer="json")
 def convert_pdb(request):
     # mode = code | file
+    ##### Check is good
     log.info(f'PDB page creation requested by {User.get_username(request)}')
     malformed = is_malformed(request, 'viewcode', 'mode', 'pdb')
     if malformed:
         return {'status': malformed}
+    ##### Get the details
     pagename = get_uuid(request)
     viewcode = request.params['viewcode']
-    data_other = re.sub(r'<\w+ (.*?)>.*', r'\1', viewcode).replace('data-toggle="protein"','').replace('data-toggle=\'protein\'','').replace('data-toggle=protein','')
+    data_other = re.sub(r'<\w+ (.*?)>.*', r'\1', viewcode)\
+                    .replace('data-toggle="protein"','')\
+                    .replace('data-toggle=\'protein\'','')\
+                    .replace('data-toggle=protein','')
     if not request.user or request.user.role not in ('admin', 'friend'):
         data_other = clean_data_other(data_other)
     settings = {'data_other': data_other,
-                'page': pagename, 'editable': True,
+                'page': pagename, 'editable': True, 'descriptors': {},
                 'backgroundcolor': 'white', 'validation': None, 'js': None, 'pdb': [], 'loadfun': ''}
+    extension = 'pdb'
+    pdb = request.params['pdb']
+    history = get_history(request)
+    definitions = get_chain_definitions(request)
+    #### determine wheat we have
     if request.params['mode'] == 'code':
-        pdb = request.params['pdb']
         if len(pdb) == 4:
-            settings['proteinJSON'] = '[{{"type": "rcsb", "value": "{0}"}}]'.format(pdb)  # PDB code.
             settings['descriptors'] = PDBMeta(pdb).describe()
+            settings['proteinJSON'] = json.dumps([{'type': 'rcsb',
+                                                   'value': pdb,
+                                                   'chain_definitions': definitions,
+                                                   'history': history}])
+            ### The difference between chain_definition and PDBMeta is that the latter has ligand info, but not Uniprot.
             settings['title'] = f'User created page (PDB: {pdb})'
-        else:
-            settings['proteinJSON'] = '[{{"type": "file", "value": "{0}"}}]'.format(pdb)  # url
+        else:  #type file means external file.
+            settings['proteinJSON'] = json.dumps([{'type': 'file',
+                                                   'value': pdb,
+                                                   'chain_definitions': definitions,
+                                                   'history': history}])
             settings['title'] = 'User submitted structure (from external PDB)'
-            settings['descriptors'] = {'text': f'PDB loaded from [{pdb}](source <i class="far fa-external-link"></i>)'}
+            settings['descriptors'] = {'text': f'PDB loaded from [source <i class="far fa-external-link"></i>]({pdb})'}
             if 'https://swissmodel.expasy.org' in pdb:
                 settings['model'] = True
-    elif request.params['mode'] == 'renumbered':
+                settings['descriptors']['ref'] = get_references(pdb)
+    elif request.params['mode'] in ('renumbered', 'file'):
         ### same as file but with mod.
-        settings['proteinJSON'] = '[{"type": "data", "value": "pdb", "isVariable": true}]'
-        pdb_data = request.params['pdb'].replace("'",'').replace('"','') #XSS treat.
-        settings['pdb'] = [('pdb', pdb_data)]
+        settings['proteinJSON'] = json.dumps([{'type': 'data',
+                                               'value': 'startingProtBlock',
+                                               'isVariable': 'true',
+                                               'chain_definitions': definitions,
+                                               'history': history}])
+        pdb_data = get_pdb_block(request)
+        settings['pdb'] = [('startingProtBlock', pdb_data)]
         settings['js'] = 'external'
-        rex = re.match('REMARK 100 THIS ENTRY IS (\w+) FROM (\w+)\.', pdb_data)
-        if rex:
-            code = rex.group(2)
-            ### this is mad wasteful. TO DO Fix.
-            definitions = Structure(id=code, description='', x=0, y=0, code=code).lookup_sifts().chain_definitions
-            settings['descriptors'] = {'peptide': [(':'+d['chain'], f"{d['uniprot']} [offset by {d['offset']}]") for d in definitions]}
-            settings['title'] = f'User created page (PDB: {code} {rex.group(1)})'
+        if history['changes']:
+            settings['descriptors']['text'] = f'\n## Changes\n {history["changes"]}'
+            if "swissmodel" in history["code"]:
+                code = 'SWISSMODEL'
+                settings['descriptors']['text'] += f'\n\n##Source\nPDB loaded from [Swissmodel <i class="far fa-external-link"></i>]({history["code"]})'
+            else:
+                code = history["code"]
+            settings['title'] = f'User created page (PDB: {code} {history["changes"]})'
+            settings['descriptors']['ref'] = get_references(history["code"])
         else:
             settings['title'] = f'User created page'
-    else: #file
+        if definitions:
+            settings['descriptors']['peptide'] = [(f":{d['chain']}", f"{d['name']} [offset by {d['offset']}]") for d in definitions]
+    elif hasattr(request.params['pdb'], 'filename'):
         settings['proteinJSON'] = '[{"type": "data", "value": "pdb", "isVariable": true}]'
-        filename = save_file(request, 'pdb', field='pdb')
-        trans = PyMolTranspiler.load_pdb(file=filename)
-        os.remove(filename)
-        if 'HELIX' in trans.raw_pdb or 'SHEET' in trans.raw_pdb:
-            settings['pdb'] = [('pdb', trans.raw_pdb)]
-        else:
-            settings['pdb'] = [('pdb', '\n'.join(trans.ss)+'\n'+trans.raw_pdb)]
+        trans = save_coordinates(request)
+        settings['pdb'] = [('pdb', trans.raw_pdb)]
         settings['js'] = 'external'
         settings['title'] = 'User submitted structure (from uploaded PDB)'
+    else:
+        log.exception(f'I have no idea what is uploaded as `pdb`. type: {type(pdb)} {pdb}')
     commit_submission(request, settings, pagename)
     return {'page': pagename}
 
 def clean_data_other(data_other):
     return Page.sanitise_HTML(f'<span {data_other}></span>').replace('<span ','').replace('></span>','')
 
-@view_config(route_name='renumber', renderer="json")
-def renumber(request):
-    #PDB code only
-    malformed = is_malformed(request, 'pdb')
-    if malformed:
-        return {'status': malformed}
-    pdb = request.params['pdb']
-    if len(pdb) != 4 or re.search('\W', pdb) is not None: ## renumber is for PDB structures only. There is no point otherwise.
-        request.response.status = 422
-        return {'status': f'{pdb} is not PDB code'}
-    definitions = Structure(id=pdb, description='', x=0, y=0, code=pdb).lookup_sifts().chain_definitions
-    trans = PyMolTranspiler.renumber(pdb, definitions)
-    return {'pdb': f'REMARK 100 THIS ENTRY IS RENUMBERED FROM {pdb}.\n' +
-                   '\n'.join(trans.ss) +
-                   '\n'+trans.raw_pdb}
-
-@view_config(route_name='remove_chains', renderer="json")
-def removal(request):
-    malformed = is_malformed(request, 'pdb', 'chains')
-    if malformed:
-        return {'status': malformed}
-    ## variant of mutate...
-    pdb = request.params['pdb']
-    chains = request.params['chains'].split()
-    return operation(request,
-                      pdb=pdb,
-                      fun_code = PyMolTranspiler.chain_removal_code,
-                      fun_file = PyMolTranspiler.chain_removal_file,
-                      chains=chains)
-
-@view_config(route_name='premutate', renderer="json") #as in mutate a structure before page creation.
-def premutate(request):
-    malformed = is_malformed(request, 'pdb', 'mutations', 'chain')
-    if malformed:
-        return {'status': malformed}
-    ## variant of mutate...
-    pdb = request.params['pdb']
-    chain = request.params['chain']
-    mutations = request.params['mutations'].split()
-    try:
-        return operation(request,
-                      pdb=pdb,
-                      fun_code = PyMolTranspiler.mutate_code,
-                      fun_file = PyMolTranspiler.mutate_file,
-                      mutations=mutations, chain=chain)
-    except ValueError:
-        request.response.status = 422
-        return {'status': f'Invalid mutations'}
-
-
-def operation(request, pdb, fun_code, fun_file, **kargs):
-    filename = os.path.join('michelanglo_app', 'temp', f'{uuid.uuid4()}.pdb') #get_uuid is not really needed as it does not go to DB.
-    ## type is determined
-    if len(pdb) == 4: ##PDB code.
-        code = pdb
-        fun_code(pdb, filename, **kargs)
-    elif len(pdb.strip()) == 0:
-        request.response.status = 422
-        return {'status': f'Empty PDB string?!'}
-    else:
-        if re.match('https://swissmodel.expasy.org', pdb): ## swissmodel
-            pdb = requests.get(pdb).text
-        with open(filename, 'w') as fh:
-            fh.write(pdb)
-        fun_file(filename,  filename, **kargs)
-    with open(filename, 'r') as fh:
-        block = fh.read()
-    os.remove(filename)
-    if len(pdb) == 4:
-        return {'pdb': f'REMARK 100 THIS ENTRY IS ALTERED FROM {pdb}.\n' +block}
-    elif 'REMARK 100 THIS ENTRY' in block:
-        code = re.match('REMARK 100 THIS ENTRY IS \w+ FROM (\w+).', pdb).group(1)
-        return {'pdb': f'REMARK 100 THIS ENTRY IS ALTERED FROM {code}.\n' + block}
-    else:
-        return {'pdb': block}
 
 @view_config(route_name='convert_pdb_w_sdf', renderer="json")
 def with_sdf(request):
@@ -367,7 +318,7 @@ def with_sdf(request):
             print('debug', k)
             sdffile = save_file(request, 'sdf', k)
             sdfdex.append({'name': re.sub('[^\w_]','',k.replace(' ','_')),
-                           'block': PyMolTranspiler.sdf_to_pdb(sdffile, pdbfile)})
+                           'block': PyMolTranspiler().sdf_to_pdb(sdffile, pdbfile)})
     if sdfdex == []:
         return {'status': 'No SDF files'}
     loadfun = 'const ligands = '+json.dumps(sdfdex)+';'
@@ -404,9 +355,9 @@ def with_sdf(request):
                 'validation': None, 'js': None, 'pdb': [], 'loadfun': loadfun,
                 'proteinJSON': '[{"type": "data", "value": "apo", "isVariable": true}, ' + ligand_defs + ']',
                 'descriptors': {'text': descr}}
-    trans = PyMolTranspiler.load_pdb(file=pdbfile)
+    trans = PyMolTranspiler().load_pdb(file=pdbfile)
     os.remove(pdbfile)
-    settings['pdb'] = [('apo', '\n'.join(trans.ss) + '\n' + trans.raw_pdb.lstrip())]
+    settings['pdb'] = [('apo', trans.pdb_block)]
     settings['title'] = 'User submitted structure (from uploaded PDB+SDF)'
     commit_submission(request, settings, pagename)
     return {'page': pagename}

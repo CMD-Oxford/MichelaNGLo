@@ -178,7 +178,7 @@ def permission(request, page, mode='edit', key_label='encryption_key'):
         request.response.status_int = 404
         log.warn(f'{User.get_username(request)} requested a missing page {page}')
         return {'status': 'page not found'}
-    elif not page.exists: #but used to exist.
+    elif not page.existant: #but used to exist.
         request.response.status_int = 410
         log.warn(f'{User.get_username(request)} requested a deleted page')
         return {'status': 'page no longer existent'}
@@ -201,7 +201,7 @@ def permission(request, page, mode='edit', key_label='encryption_key'):
         try:
             page.load()
         except FileNotFoundError:
-            page.exists = False
+            page.existant = False
             request.response.status_int = 404
             log.error(f'Page not found {page.identifier}')
             return {'status': 'Page not found!'}

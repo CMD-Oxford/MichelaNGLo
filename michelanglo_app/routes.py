@@ -21,6 +21,7 @@ def includeme(config):
     config.add_route('convert_pdb_w_sdf', '/convert_pdb_w_sdf')
     config.add_route('convert_mesh', '/convert_mesh')
     config.add_route('renumber', '/renumber')
+    config.add_route('dehydrate', '/dehydrate')
     config.add_route('choose_pdb', '/choose_pdb')
     config.add_route('task_check','/task_check')
     config.add_route('save_pdb', '/save_pdb')
@@ -39,6 +40,7 @@ def includeme(config):
     config.add_route('msg', '/msg')
     config.add_route('get_pages', '/get_pages')
     config.add_route('admin', '/admin')
+    config.add_route('vote', '/vote')
     config.add_route('venus', '/venus')
     config.add_route('venus_random', '/venus_random')
     config.add_route('venus_analyse', '/venus_analyse')
@@ -48,6 +50,7 @@ def includeme(config):
     config.add_route('redirect', '/r/{id}')
     config.add_route('userthumb', '/thumb/{id}')
     config.add_route('monitor', '/monitor/{id}')
+    config.add_route('robots','/robots.txt')
 
     #previously existent routes... deadlink possible:
     #config.add_route('sandbox', '/sandbox')

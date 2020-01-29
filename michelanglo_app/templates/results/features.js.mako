@@ -1,6 +1,7 @@
 ####### THIS IS A JS FILE ##########################
 ####### THE EXTENSION IS MAKO AS THE RENDERER IS MAKO
 ####### THIS IS NOT GREAT CODING.
+// <script>
 
 
 
@@ -12,7 +13,7 @@
 ### copied from results.js.mako in VENUS
 ###################################################
 window.ft = new FeatureViewer('${protein.sequence}',
-           '#fv',
+           '${featureView}',
             {
                 showAxis: true,
                 showSequence: true,
@@ -53,25 +54,40 @@ const addFeatureTooltip = (featLabel, text) => $('.yaxis:contains('+featLabel+')
 %endif
 
 <%
+
+    def feature_viewer_standardise(dex):
+        for entry in dex:
+            if 'x' not in entry and 'residue_index':
+                entry['x'] = entry['residue_index']
+                if 'y' not in entry:
+                    entry['y'] = entry['residue_index']
+            if 'description' not in entry:
+                if 'ptm' in entry:
+                    entry['description'] = entry['from_residue']+str(entry['residue_index'])+entry['ptm']
+            if 'id' not in entry and 'description' in entry:
+                    entry['id'] = entry['description'].replace(' ','_')
+        return dex
+
+
     combo_roi=[]
     for key in ('transmembrane region','intramembrane region','region of interest','peptide','site','active site','binding site','calcium-binding region','zinc finger region','metal ion-binding site','DNA-binding region','lipid moiety-binding region', 'nucleotide phosphate-binding region'):
         if key in protein.features:
-            combo_roi.extend(protein.features[key])
+            combo_roi.extend(feature_viewer_standardise(protein.features[key]))
 
     combo_other=[]
     for key in ('propeptide','signal peptide','repeat','coiled-coil region','compositionally biased region','short sequence motif','topological domain','transit peptide'):
         if key in protein.features:
-            combo_other.extend(protein.features[key])
+            combo_other.extend(feature_viewer_standardise(protein.features[key]))
 
     combo_ptm=[]
     for key in ('initiator methionine','modified residue','glycosylation site','non-standard amino acid'):
         if key in protein.features:
-            combo_ptm.extend(protein.features[key])
+            combo_ptm.extend(feature_viewer_standardise(protein.features[key]))
 
     combo_ss=[]
     for key in ('helix', 'turn', 'strand'):
         if key in protein.features:
-            combo_ss.extend(protein.features[key])
+            combo_ss.extend(feature_viewer_standardise(protein.features[key]))
 %>
 %if combo_roi:
     ft.addFeature({
@@ -109,6 +125,20 @@ const addFeatureTooltip = (featLabel, text) => $('.yaxis:contains('+featLabel+')
     });
     addFeatureTooltip("Modified residues", "A collection of various Uniprot annotations: 'initiator methionine','modified residue','glycosylation site','non-standard amino acid'");
 %endif
+
+%if 'PSP_modified_residues' in protein.features and protein.features['PSP_modified_residues']:
+    ft.addFeature({
+        data: ${str(feature_viewer_standardise(protein.features['PSP_modified_residues']))|n},
+        name: "Mod. residues (HT)",
+        className: "modified",
+        color: "slateblue",
+        type: "unique",
+        filter: "Modified"
+    });
+    addFeatureTooltip("Mod. residues (HT)", "Post translational modifications from Phosphosite-plus");
+%endif
+
+
 
 %if combo_ss:
     ft.addFeature({
@@ -148,16 +178,16 @@ const addFeatureTooltip = (featLabel, text) => $('.yaxis:contains('+featLabel+')
     addFeatureTooltip("Splice variant","Regions that differ/absent in splice variants (according to Uniprot)");
 %endif
 
-%if protein.gNOMAD:
+%if protein.gnomAD:
     ft.addFeature({
-        data: ${str([dict(snp._asdict()) for snp in protein.gNOMAD])|n},
-        name: "gNOMAD",
+        data: ${str([dict(snp._asdict()) for snp in protein.gnomAD])|n},
+        name: "gnomAD",
         className: "modified",
         color: "skyblue",
         type: "unique",
         filter: "Modified"
     });
-    addFeatureTooltip("gNOMAD","gNOMAD variant (i.e. variant in the healthy human population)");
+    addFeatureTooltip("gnomAD","gnomAD variant (i.e. variant in the healthy human population)");
 %endif
 
 %if 'disulfide bond' in protein.features:
@@ -169,7 +199,7 @@ const addFeatureTooltip = (featLabel, text) => $('.yaxis:contains('+featLabel+')
         type: "path",
         filter: "Modified Residue"
     });
-    addFeatureTooltip("gNOMAD","gNOMAD variant (i.e. variant in the healthy human population)");
+    addFeatureTooltip("gnomAD","gnomAD variant (i.e. variant in the healthy human population)");
 %endif
 
 %if 'cross-link' in protein.features:
@@ -184,7 +214,7 @@ const addFeatureTooltip = (featLabel, text) => $('.yaxis:contains('+featLabel+')
     addFeatureTooltip("disulfide bond","Disulfide bond in Uniprot entry. It may or may not be present under all conditions");
 %endif
 
-%if hasattr(protein, 'protein') and protein.properties:
+%if hasattr(protein, 'properties') and protein.properties:
     ft.addFeature({
         data: ${str([{'x': i+4, 'y': score} for i, score in enumerate(protein.properties["kd"])])|n},
         name: "Hydrophobilicity",
@@ -207,13 +237,17 @@ const addFeatureTooltip = (featLabel, text) => $('.yaxis:contains('+featLabel+')
     });
     addFeatureTooltip("Flexibility","Flexibility predicted by amino acid identity. low flexibility generally means a structured protein");
 %endif
-
 ################### Structures #######################
 <%
     limited = 45
-    p = sorted(protein.pdbs, key=lambda n: n.y - n.x, reverse=True)[0:limited]
-    s = sorted(protein.swissmodel, key=lambda n: n.y - n.x, reverse=True)[0:limited-len(protein.pdbs)]
-    m = sorted(protein.pdb_matches, key=lambda n: n.y - n.x, reverse=True)[0:limited-len(protein.pdbs)-len(protein.swissmodel)]
+    if include_pdb:
+        p = sorted(protein.pdbs, key=lambda n: n.y - n.x, reverse=True)[0:limited]
+        s = sorted(protein.swissmodel, key=lambda n: n.y - n.x, reverse=True)[0:limited-len(protein.pdbs)]
+        m = sorted(protein.pdb_matches, key=lambda n: n.y - n.x, reverse=True)[0:limited-len(protein.pdbs)-len(protein.swissmodel)]
+    else:
+        p = []
+        s = []
+        m = []
 %>
 %for title, data, color, classname in (("Crystal structures",p, 'lime', 'pdb'), ("Swissmodel", s, 'GreenYellow', 'swiss'), ("Homologue structures", m, 'khaki', 'homo')):
     %if data:
@@ -245,7 +279,12 @@ $('.swiss').click(function () {
 
 $('#label_protName').html("${protein.recommended_name} (encoded by <i>${protein.gene_name}</i>)");
 
+############################################ This is the table #############
+% if include_pdb:
 window.pdbOptions = ${json.dumps([s.__dict__ for s in protein.pdbs])|n};
+% else:
+    window.pdbOptions = [];
+% endif
 
 if (pdbOptions.length) {
     $('#partner_table').html(`<table class="table table-hover" style="table-layout: fixed;"><thead class="thead-light"><tr>
@@ -257,6 +296,7 @@ if (pdbOptions.length) {
                                         <th data-toggle="tooltip" title="What other proteins are there?">Bound partner(s)</th>
                                         <th data-toggle="tooltip" title="What small molecules are in the structure?">Ligand(s)</th>
                                 </tr></thead><tbody></tbody></table>`);
+    $('#partner_table [data-toggle="tooltip"]').tooltip();
     const table = $('#partner_table tbody');
     const protLen = ${len(protein)};
     let partnerNames = [];
@@ -282,14 +322,21 @@ if (pdbOptions.length) {
                                             <td id="lig_${v.code}"><i class="fas fa-spinner fa-spin"></i></td>
                                           </tr>`);
                         $.getJSON({url: 'https://www.ebi.ac.uk/pdbe/api/pdb/entry/molecules/'+v.code, dataType: 'json', crossOrigin: true})
-                            .then(response => {$('#lig_'+v.code).html(  response[v.code.toLowerCase()].filter(e=>e.molecule_type !== 'polypeptide(L)')
-                                                                                                     .filter(e=> ! ['HOH', 'NA', 'GOL', 'CL', 'MG', 'K', 'BME', 'EDO', 'DMS', 'PGE'].includes(e.chem_comp_ids[0]))
-                                                                                                     .map(e => e.molecule_name[0].toLowerCase()+' ('+e.chem_comp_ids[0]+' in chain '+e.in_chains.join('&')+')')
-                                                                                                     .join(' + ')
-                                                                    );
+                            .then(response => { const components = response[v.code.toLowerCase()];
+                                                $('#lig_'+v.code).html(  components.filter(e=>e.molecule_type !== 'polypeptide(L)')
+                                                                                   .filter(e=> ! ['HOH', 'NA', 'GOL', 'CL', 'MG', 'K', 'BME', 'EDO', 'DMS', 'PGE'].includes(e.chem_comp_ids[0]))
+                                                                                   .map(e => e.molecule_name[0].toLowerCase()+' ('+e.chem_comp_ids[0]+' in chain '+e.in_chains.join('&')+')')
+                                                                                   .join(' + ')
+                                                                     );
+
+                                                let c = myChain.match(/Chain \w/g).map(t => t.replace('Chain ',''))[0];
+                                                let mutants = components.filter(e=>e.molecule_type === 'polypeptide(L)').find(e => e.in_chains.includes(c)).mutation_flag;
+                                                let res = $('#res_'+v.code);
+                                                if (mutants !== null) {
+                                                    res.html(res.html() + ` <i class="far fa-tools" data-toggle="tooptip" title="This structure contains mutated residues: ${mutants}"></i>`);
+                                                }
                                                 let textDump = JSON.stringify(response);
-                                                if (['"MSE"', '"I3C"', '"B3C"'].some(v => textDump.match(v) !== null)) {
-                                                            let res = $('#res_'+v.code);
+                                                if (['"MSE"', '"I3C"', '"B3C"'].some(e => textDump.match(e) !== null)) {
                                                             res.html(res.html() + ' <i class="far fa-stroopwafel" data-toggle="tooptip" title="This structure contains compounds added to solve the phase problem. Other structures may be better suited for your needs."></i>');
                                                         }
                                                }
@@ -339,3 +386,6 @@ if (pdbOptions.length) {
 } else {
 $('#partner_table').html('<p>No crystal structures to show.</p>');
 }
+
+
+// </script>

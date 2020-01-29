@@ -270,7 +270,7 @@ pre {
     <div class="confidential-ribbon shadow" data-toggle="tooltip" title="This page is confidential. Namely, the URL to this page and its contents have been shared with a specific addressee as a privileged communication that is intended to be read only by the specific addressee. The latter party, unless otherwise specified, is not at liberty to disclose this page and information with a third party."><i class="far fa-user-secret"></i> Confidential</div>
 %endif
 <div id="toasterOuter"  class="position-absolute m-0 w-100" style="z-index: 9999;">
-<div id="toaster" class="m-0 w-100 d-flex flex-column  pt-3 pl-3" style="position: fixed;"></div>
+<div id="toaster" class="m-0 w-100 d-flex flex-column  pl-3" style="position: fixed;  padding-top: 5em; pointer-events: none"></div>
 </div>
 
 <main role='main' class="container-fluid p-0 w-100 mx-0">
@@ -282,7 +282,7 @@ pre {
           <div class="row" style="line-height: 1rem;">
               <div class="col-12 col-lg-5 offset-lg-1 text-muted p-3">
                   <small><a href="https://www.schrodinger.com/" target="_blank">PyMOL <i class="far fa-external-link-square"></i></a> is a trademark of <a href="https://pymol.org/2/" target="_blank">Schr&ouml;dinger , LLC <i class="far fa-external-link-square"></i></a>. The authors are not affiliated or involved with PyMOL or Schr&ouml;dinger.
-                      <br/>Data is not kept for commercial, see data <a href="docs/users">policy documentation</a>.</small></div>
+                      <br/>Data is not kept for commercial purposes, see data <a href="/docs/users">policy documentation</a>.</small></div>
               <div class="d-none d-lg-block col-5 offset-lg-1 p-2">
                   %if offline:
                   University of Oxford &mdash; NIHR: BRC &mdash; SGC
@@ -419,6 +419,11 @@ $('#chat_send').click((event) => {
     $( document ).ready(()=> $('head').append(`<link rel="stylesheet" href="/static/ThirdParty/Font-Awesome-Pro/css/all.min.css" crossorigin="anonymous">
     <link rel="stylesheet" href="/static/ThirdParty/bootstrap-tourist/bootstrap-tourist.css">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/bootstrap-colorpicker/3.0.0-beta.3/css/bootstrap-colorpicker.css">`));
+
+    //Don't have FA-pro in your local deployment?
+    //Then uncomment here:
+    //$('.far').addClass('fas').removeClass('far');
+
 </script>
 
 

@@ -11,7 +11,7 @@ from pyramid.httpexceptions import HTTPFound
 import logging, json, os
 log = logging.getLogger(__name__)
 
-from . import custom_messages
+from . import custom_messages, votes
 from ._common_methods import is_malformed, is_js_true
 
 @view_config(route_name='userdata', renderer="../templates/user_protein.mako")
@@ -74,6 +74,7 @@ def get_userdata(request, pagename):
         elif settings['is_unseen']:
             settings['firsttime'] = True
             settings['is_unseen'] = False # switch it off.
+            settings['votes'] = dict(votes)
             page.save(settings)
         else:
             settings['is_unseen'] = False
@@ -149,6 +150,7 @@ def get_userdata(request, pagename):
                 r['time'] = str(r['time'])  #patch. please delete me soon.
             return render_to_response("json", settings, request)
         else:
+
             settings['meta_title'] = 'Michelaɴɢʟo user-created page: ' + settings['title']
             settings['meta_description'] = settings['description'][:150]
             settings['meta_image'] = f'https://michelanglo.sgc.ox.ac.uk/thumb/{page.identifier}'
@@ -215,7 +217,7 @@ def thumbnail(request):
     pagename = request.matchdict['id']
     page = Page.select(request, pagename)
     verdict = permission(request, page, 'view', key_label='key')
-    if verdict['status'] != 'OK' or not page.exists:
+    if verdict['status'] != 'OK' or not page.existant:
         request.response.status = 200 # we would block facebook and twitter otherwise as they redirect.
         response = FileResponse(os.path.join('michelanglo_app', 'static', 'tim_barrel.png'))
     elif os.path.exists(page.thumb_path):
