@@ -1,3 +1,11 @@
+# ['data_other', 'page', 'editable', 'backgroundcolor', 'validation', 'js', 'pdb', 'loadfun', 'proteinJSON', 'descriptors',
+# 'title', 'description', 'authors', 'editors', 'is_unseen', 'visitors', 'image', 'uniform_non_carbon', 'verbose', 'save',
+# 'public', 'confidential', 'encryption', 'viewport', 'stick', 'date', 'encryption_key', 'key', 'encrypted', 'firsttime',
+# 'freelyeditable', 'columns_viewport', 'columns_text', 'location_viewport', 'user', 'model', 'revisions', 'descr_mdowned',
+# 'no_user', 'no_analytics', 'no_buttons', 'current_page']
+
+
+
 from pyramid.view import view_config
 from pyramid.renderers import render_to_response
 from ..models.pages import Page
@@ -10,7 +18,7 @@ import json, re
 import datetime
 import requests
 
-from ._common_methods import is_js_true,  is_malformed, get_uuid, get_pdb_block
+from .common_methods import is_js_true,  is_malformed, get_uuid, get_pdb_block
 
 import logging
 log = logging.getLogger(__name__)
@@ -33,7 +41,7 @@ def edit(request):
     if malformed:
         return {'status': malformed}
     # get ready
-    page = Page.select(request, request.params['page'])
+    page = Page.select(request.dbsession, request.params['page'])
     verdict = permission(request, page, 'edit', key_label='encryption_key')
     if verdict['status'] != 'OK':
         return verdict
@@ -51,9 +59,11 @@ def edit(request):
             get_trashcan(request).owned.remove(page.identifier)
         # make a backup
         page.settings['revisions'].append({'user': user.name, 'time': str(page.timestamp), 'text': page.settings['description']})
+        if 'no_revisions' in request.params:
+            page.settings['revisions'] = []
         # only admins and friends can edit html fully
         if user.role in ('admin', 'friend'):
-            for key in ('loadfun', 'title', ):
+            for key in ('loadfun', 'title', 'data_other'):
                 if key in request.params:
                     page.settings[key] = request.params[key]
             if 'description' in request.params:
@@ -70,6 +80,11 @@ def edit(request):
             if 'description' in request.params:
                 page.settings['descr_mdowned'] = page.sanitise_HTML(markdown.markdown(request.params['description']))
                 page.settings['description'] = request.params['description']
+            if 'data_other' in request.params:
+                text = request.params['data_other']
+                text = text.replace('<', '').replace('&lt;', '').replace('>', '').replace('&gt;', '')
+                text = ' '.join(re.findall('data-[\w\-\_]+\="[^"]*?"', text))
+                page.settings['data_other'] = text
         page.settings['confidential'] = is_js_true(request.params['confidential'])
         if page.privacy == '' or page.privacy is None:
             page.privacy = 'private'
@@ -77,14 +92,13 @@ def edit(request):
         if user.role == 'admin' and request.params['public'] not in (None, False, True, 'false','true'):
             ## only admin can set to anything that is not private | public
             page.privacy = request.params['public'].lower() # private | public | published | sgc | pinned
+        elif page.privacy not in ('public', 'private'):
+                pass # keep page privacy. admin set it to published or sgc or pinned.
         elif is_js_true(request.params['public']):
-            if page.privacy not in ('public', 'private'):
-                pass # keep page privacy. admin set it to published or sgc.
-            else:
-                page.privacy = 'public'
+            page.privacy = 'public'
         else:
             page.privacy = 'private'
-        page.settings['public'] = page.is_public()
+        page.settings['public'] = page.privacy
         if not page.is_public():
             page.settings['freelyeditable'] = is_js_true(request.params['freelyeditable'])
         else:
@@ -116,7 +130,7 @@ def edit(request):
         if 'columns_viewport' in request.params:
             page.settings['columns_viewport'] = int(request.params['columns_viewport'])
             page.settings['columns_text'] = int(request.params['columns_text'])
-        if 'location_viewport' in request.params:
+        if 'location_viewport' in request.params: #left | right (or anything)
             page.settings['location_viewport'] = request.params['location_viewport']
         if 'proteinJSON' in request.params:
             page.settings['proteinJSON'] = request.params['proteinJSON']
@@ -125,6 +139,11 @@ def edit(request):
                 page.settings['image'] = request.params['image']
             else:
                 page.settings['image'] = False
+        if 'refresh_image' in request.params:
+            if os.path.exists(page.thumb_path):
+                os.remove(page.thumb_path)
+        if 'async_pdb' in request.params: # the PDBs are loaded asynchronously
+            page.settings['async_pdb'] = is_js_true(request.params['async_pdb'])
         # save
         page.edited = True
         page.title = page.settings['title']
@@ -137,8 +156,8 @@ def combined(request):
     malformed = is_malformed(request, 'target_page','donor_page','task','name')
     if malformed:
         return {'status': malformed}
-    target_page = Page.select(request, request.params['target_page'])
-    donor_page = Page.select(request, request.params['donor_page'])
+    target_page = Page.select(request.dbsession, request.params['target_page'])
+    donor_page = Page.select(request.dbsession, request.params['donor_page'])
     log.info(f'{User.get_username(request)} is requesting to merge page {donor_page} to {target_page}')
     task = Page(request.params['task'])
     target_verdict = permission(request, target_page, 'edit', key_label='target_encryption_key')
@@ -214,7 +233,7 @@ def delete(request):
     malformed = is_malformed(request, 'page')
     if malformed:
         return {'status': malformed}
-    page = Page.select(request, request.params['page'])
+    page = Page.select(request.dbsession, request.params['page'])
     log.info(f'{User.get_username(request)} is requesting to delete page {page}')
     verdict = permission(request, page, 'del', key_label='encryption_key')
     if verdict['status'] != 'OK':
@@ -236,7 +255,7 @@ def mutate(request):
     malformed = is_malformed(request, 'page','model','chain','mutations', 'name')
     if malformed:
         return {'status': malformed}
-    page = Page.select(request, request.params['page'])
+    page = Page.select(request.dbsession, request.params['page'])
     log.info(f'{User.get_username(request)} is making mutants page {page}')
     user = request.user
     verdict = permission(request, page, 'del', key_label='encryption_key')
@@ -335,7 +354,7 @@ def copy(request):
     if malformed:
         return {'status': malformed}
     # get ready
-    ref = Page.select(request, request.params['page'])
+    ref = Page.select(request.dbsession, request.params['page'])
     if ref.encrypted:
         return {'status': 'Cannot copy an encrypted page due to strong security concerns, even with editing rights and the key.'}
     verdict = permission(request, ref, 'view', key_label='encryption_key')

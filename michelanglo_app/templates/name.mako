@@ -24,7 +24,7 @@
                 <div class="input-group-prepend">
                     <span class="input-group-text">Species</span>
                 </div>
-                <input type="text" class="form-control rounded-right" id="species" autocomplete="new-password" value="human">
+                <input type="text" class="form-control rounded-right" id="species" autocomplete="off" value="human">
                 <div class="invalid-feedback" id="error_species">Unrecognised name</div>
                 <div class="valid-feedback" id="taxid">Error</div>
             </div>
@@ -36,7 +36,7 @@
                                     <div class="input-group-prepend">
                                         <span class="input-group-text">Gene/protein name</span>
                                     </div>
-                                    <input type="text" class="form-control rounded-right" id="gene" autocomplete="new-password">
+                                    <input type="text" class="form-control rounded-right" id="gene" autocomplete="off">
                                     <div class="invalid-feedback" id="error_gene">Unrecognised name</div>
                                     <div class="valid-feedback" id="uniprot">Error</div>
                                 </div>
@@ -56,7 +56,7 @@
             <p>Two pieces of information are presented here to help you choose: the first is the length of the protein and the second is the partners if any in the structure.</p>
 
             <div class="alert alert-info" role="alert">
-                <i class="far fa-hand-pointer"></i> Clicking on an entry in the PDB or Swissmodel tracks (if structures are present) will load that protein structure.
+                <i class="far fa-hand-pointer"></i> Clicking on an entry in the PDB, AlphaFold2 or Swissmodel tracks (if structures are present) will load that protein structure.
                 <button type="button" class="close" data-dismiss="alert" aria-label="Close">
                     <span aria-hidden="true">&times;</span>
                   </button>

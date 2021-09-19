@@ -23,12 +23,14 @@ window.prolinks = {
         $('#edit_description').html(description);
     },
     expandProlinkOnClick: (number) => {
+        // load it in the modal.
         window.currentRange = number;
         $('#markup_modal').modal('show');
         setTimeout(() => {  // really ought to override interactive builder, the fx at modal load
                 let pro = $('<span '+prolinks.elements[number-1].fore+' ></span>');
                 ['selection', 'color', 'title', 'radius', 'tolerance', 'load'].map((v) => {
                     if (pro.data(v) !== undefined) {$('#markup_'+v).val(pro.data(v) )}
+                    else {$('#markup_'+v).val('');}
                 });
                 if (pro.data('focus') !== undefined) {
                     $('#'+pro.data('focus')).click();
@@ -39,7 +41,16 @@ window.prolinks = {
                 }
                 if (pro.data('view') !== undefined) { //do I need to mod this?
                     $('#markup_view').val(JSON.stringify(pro.data('view')));
+                } else {$('#markup_view').val('');}
+                let i=1;
+                while (!! pro.data('selection-alt'+i)) {
+                    addAltResidue();
+                    $('#markup_selection'+i).val(pro.data('selection-alt'+i));
+                    $('#markup_color'+i).val(pro.data('color-alt'+i) || '');
+                    $('#markup_focus'+i).val(pro.data('focus-alt'+i) || 'residue');
+                    i++;
                 }
+                if (pro.data('selection-alt'))
                 interactive_changer();
                 }, 500);
     },
@@ -88,14 +99,17 @@ $('#edit_submit').click(function () {
     try {
     ops.addToast('informare','Data submission','Your request is being processed','bg-info');
     if ($('#encryption').prop('checked')) {
-        if (! $('#encryption_key').val) {return 0}
+        if (! $('#encryption_key_input').val) {return 0}
     }
     if ($('#collapse_prolinks').prop('checked')) {prolinks.expandProlinks()}
     // convert description to markdown.
-    var description = $($('#edit_description')[0].outerHTML.replace(/<br.*?>/g,'\n')).text(); //changed from html
+    let htmlDescription = $('#edit_description')[0].innerHTML;
+    htmlDescription = htmlDescription.replace(/<br.*?>/g,'\n');
+    htmlDescription = htmlDescription.replace(/\n?<div>([\s\S]*?)<\/div>\n?/gm, '\n$1\n'); //firefox bug.
+    let description = $('<div>'+htmlDescription+'</div>').text(); //changed from html
     //description = description.replace(/<br.*?>/g,'\n\n').replace(/\n+/gm,'\n\n').replace('&gt;','>').replace('&lt;','<').replace('&amp;','&'); //unescape.
-    description = description.replace(/<div>([\s\S]*?)<\/div>/gm, '$1'); //firefox bug.
-    description = description.replace(/<br.*?>/g,'\n\n').replace(/\n\n+/gm,'\n\n'); //runaway newline bug.
+    description = description.replace(/<br.*?>/g,'\n\n'); //user physically wrote br.
+    description = description.replace(/\n\n+/gm,'\n\n'); //runaway newline bug.
     // @fa[icon-name]
     description = description.replace(/@fa\[(.*?)\]/gi,'<i class="far fa-$1"></i>');
 
@@ -104,11 +118,7 @@ $('#edit_submit').click(function () {
     let new_editors = $('.user-editable-state:checked').map((idx, item) => $(item).data('user')).toArray();
     let in_editor = $('#input_author').val();
     if (in_editor) {new_editors.push(in_editor)}
-    $.ajax({
-        url: "/edit_user-page",
-        type: 'POST',
-        dataType: 'json',
-        data: {
+    let data = {
             'type': 'edit',
             'title': $('#edit_title').val(),
             'description': description,
@@ -123,11 +133,18 @@ $('#edit_submit').click(function () {
             'backgroundcolor': $('[role="NGL"]').data('backgroundcolor'),
             'new_editors': JSON.stringify(new_editors),
             'encryption': $('#encryption').prop('checked'),
-            'encryption_key': $('#encryption_key').val(),
+            'encryption_key': $('#encryption_key_input').val(),
             'public': (public.nodeName == "SELECT") ? public.value : public.checked,
             'confidential': $('#confidential').prop('checked'),
-            'model': $('#model').prop('checked')
-        }
+            'model': $('#model').prop('checked'),
+            'async_pdb': $('#asyncPDB').prop('checked')
+        };
+    if (window.initial_prolink !== undefined) {data['data_other'] = window.initial_prolink}
+    $.ajax({
+        url: "/edit_user-page",
+        type: 'POST',
+        dataType: 'json',
+        data: data
         })
         .done((msg) => location.reload())
         .fail((xhr) => ops.addToast('userpageerror','Error '+xhr.status,'An error occured. '+xhr.responseJSON));
@@ -188,7 +205,12 @@ $('#results').append('<div class="btn-group mb-3" role="group" aria-label="Use">
                     '</div>');
 
 $('#markup_modal_btn').on('click', e => {
-    window.currentRange = document.getSelection().getRangeAt(0);
+    if (document.getSelection().type !== "None") { //Range | Caret
+        window.currentRange = document.getSelection().getRangeAt(0);}
+    else {
+        setTimeout(() => $('#markup_modal').modal('hide'), 500);
+        ops.addToast('unselected','Incorrect usage','Please select some text with your cursor to use this','bg-warning');
+    }
 });
 
 $('#usespan').click(function () {
@@ -196,7 +218,10 @@ $('#usespan').click(function () {
     let elems=$($('#results').text());
     // select the appropriate one.
     let wanted = elems[0].outerHTML;
-    if (typeof window.currentRange === "number") {  //its a replacement
+    if (window.currentRange === -1) { //initial
+        window.initial_prolink = wanted.replace(/(<.*?>).*?<\/.*?>/,'$1').replace(/</mgi,'&lt;').replace(/>/mgi,'&gt;');
+    }
+    else if (typeof window.currentRange === "number") {  //its a replacement
         prolinks.elements[window.currentRange-1] = {
             fore: wanted.replace(/(<.*?>).*?<\/.*?>/,'$1').replace(/</mgi,'&lt;').replace(/>/mgi,'&gt;'),
             aft: wanted.replace(/<.*?>.*?(<\/.*?>)/,'$1').replace(/</mgi,'&lt;').replace(/>/mgi,'&gt;'),
@@ -222,7 +247,7 @@ $('#usespan').click(function () {
     //let d = $('#edit_description');
     //d.html(d.html()+'\n'+addenda);
     //$('[data-toggle="tooltip"]').tooltip();
-    $('#markup_modal').modal('hide');
+    $('#markup_modal,#initial_modal').modal('hide');
 });
 
 $('#formatting button').click(e => {
@@ -307,3 +332,34 @@ window.loadPastVersion = (i) => {
     $('#edit_description').html(revisions[i]);
     $('#revision_menu').append(`<a class="dropdown-item" href="#" onclick="loadPastVersion(${'${r}'})">unsaved version.</a>`);
 };
+
+$('#initial_btn').click(() => {
+    // muppet prevention system
+    if (myData.proteins[0].loadFx !== undefined) {
+        $('#warnAboutLoadfun').show();
+    } else {$('#warnAboutLoadfun').hide();}
+    // load the modal
+    window.currentRange = -1;
+});
+
+// this is a copy paste
+$('#initial_modal').on('shown.bs.modal', function (e) {
+    //move the viewport over...
+    $('#viewport').after('<div id="moved_viewport"></div>');
+    $('#modal_viewport_boxAlt').append($('#viewport').detach());
+    NGL.getStage('viewport').handleResize();
+    $('#altResidues').children().not('#addResidue').detach();
+    let mf = $('#markup_form').detach();
+    $('#markup_formAlt').append(mf);
+    interactive_builder();
+});
+
+// as above
+$('#initial_modal').on('hide.bs.modal', function (e) {
+    $('#moved_viewport').before($('#viewport').detach());
+    $('#viewport').after('<div id=""></div>');
+    $('#moved_viewport').detach();
+    NGL.getStage('viewport').handleResize();
+    let mf = $('#markup_form').detach();
+    $('#markup_formParent').append(mf);
+});

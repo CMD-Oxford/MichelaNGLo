@@ -10,16 +10,38 @@
 </%block>
 
 <%block name="main">
+    <%
+        from michelanglo_app.models import Publication, Doi
+
+        def publication(page):
+            pub = request.dbsession.query(Publication).filter_by(identifier=page.identifier).first()
+            if pub:
+                return pub.to_html()
+            else:
+                return '(No publication data set)'
+
+        from datetime import datetime, timedelta
+        unedited_time = datetime.now() - timedelta(days=20)
+        untouched_time = datetime.now() - timedelta(days=300)
+
+        shorts = {d.long: d.short for d in request.dbsession.query(Doi).all()}
+    %>
 
     <%def name='card(page)'>
-        <div class="card hypercard mb-4" onclick="window.location='/data/${page.identifier}'">
+        <div class="card hypercard mb-4"
+              %if page.identifier in shorts:
+                  data-uuid="r/${shorts[page.identifier]}"
+              %else:
+                  data-uuid="data/${page.identifier}"
+              %endif
+              >
               <img src="/thumb/${page.identifier}" class="card-img-top p-4" alt="thumbnail of ${page.title}">
               <div class="card-body">
                 <h5 class="card-title">${page.title}</h5>
                   %if page.privacy == 'public':
                     <p class="card-text text-muted">This page was created by a user.</p>
                   %elif page.privacy == 'published':
-                    <p class="card-text text-muted">This user-created page appears in a publication.</p>
+                    <p class="card-text text-muted">This user-created page appears in a publication.<br/><small>${publication(page)|n}</small></p>
                   %elif page.privacy == 'pinned':
                     <p class="card-text text-muted">This page is of importance so is pinned.</p>
                   %elif page.privacy == 'sgc':
@@ -27,7 +49,24 @@
                   %endif
               </div>
                 <div class="card-footer">
-                          <small class="text-muted"><span class="text-muted">ID:</span> ${page.identifier}</small>
+                    %if page.identifier in shorts:
+                        <small class="text-muted"><span class="text-muted">short ID:</span> ${shorts[page.identifier]}</small>
+                    %else:
+                        <small class="text-muted"><span class="text-muted">ID:</span> ${page.identifier}</small>
+                    %endif
+                    %if page.protected:
+                        <i class="far fa-lock"  data-toggle="tooltip" title="This page cannot be deleted."></i>
+                    %endif
+                    %if page.encrypted:
+                        <i class="far fa-key" data-toggle="tooltip" title="This page has been encrypted."></i>
+                    %endif
+                    %if page.privacy != 'private':
+                        &nbsp;
+                    %elif not page.edited and page.timestamp < unedited_time:
+                        <i class="far fa-alarm-clock" data-toggle="tooltip" title="This page is going to be deleted in ${(page.timestamp - datetime.now()) + timedelta(days=30)} unless edited."></i>
+                    %elif page.edited and page.timestamp < untouched_time:
+                        <i class="far fa-alarm-clock" data-toggle="tooltip" title="This page is going to be deleted in ${(page.timestamp - datetime.now()) + timedelta(days=365)} unless opened."></i>
+                    %endif
                 </div>
             </div>
     </%def>
@@ -81,4 +120,17 @@
                 <hr/>
             %endif
         %endfor
+</%block>
+
+<%block name="script">
+    <script type="text/javascript">
+        $(document).ready(function () {
+            $('.hypercard').click(event => {
+                if (event.target.tagName !== 'A') {
+                    identifier = $(event.target).parents('.hypercard').data('uuid');
+                    window.location=identifier;
+                }
+            });
+        });
+    </script>
 </%block>

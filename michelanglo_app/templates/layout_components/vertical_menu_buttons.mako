@@ -1,8 +1,20 @@
-<div class="float-right d-flex flex-row">
-    #### filled by JS in layout.mako
-    <span id="user" class="my-2 mr-3"></span>
-<div class="d-flex flex-column" style="width: 42px;">
-    <button class="btn btn-outline-secondary my-1 d-none d-lg-block" type="button"
+<div class="float-right">
+    <div class="pointlessly-required-div">
+        #### filled by JS in layout.mako
+    <div id="user" class="my-1 mr-3 text-right"></div>
+        #### two icon row closed
+        <div class="d-flex flex-row float-right">
+        <button class="btn btn-outline-secondary m-1" type="button" style="width: 42px;" id="accessibility_btn"
+                data-toggle="tooltip" title="Increase visibility of prolinks (protein-controlling links)">
+        <i class="far fa-eye-slash"></i>
+    </button>
+        <button class="btn btn-outline-secondary m-1" type="button" style="width: 42px;" data-toggle="modal" data-target="#chat_modal" id="chat_modal_btn">
+        <i class="far fa-comments"
+                data-toggle="tooltip" title="Send message to admin (registered users only)"
+        ></i>
+    </button>
+    ### Twice because mobile.
+     <button class="btn btn-outline-secondary m-1 d-none d-lg-block" type="button" style="width: 42px;"
             title="Menu"
             id="menu"
             data-container="body"
@@ -12,13 +24,14 @@
             data-html="true"
             data-content='<div class="list-group list-group-flush">
                             <%
-                            menu_opts = (('Home','/','far fa-home'),
+                            menu_opts = (('Home','/michelanglo','far fa-home'),
                                ('Your pages','/personal','far fa-unlock'),
                                ('Convert PyMol file','/pymol','far fa-hammer'),
                                ('Convert PDB file','/pdb','far fa-wrench'),
                                ('Name to PDB', '/name', 'far fa-id-badge'),
+                               ('VENUS', '/venus', 'far fa-radar'),
                                ('Convert custom mesh','/custom','far fa-mortar-pestle'),
-                               ('Primary documentation','/docs','far fa-books'),
+                               ('Documentation','/docs','far fa-books'),
                                ('Gallery','/gallery','far fa-palette'),
                                ('Github repository','https://github.com/matteoferla/PyMOL-to-NGL-transpiler','fab fa-github')
                                )
@@ -33,16 +46,14 @@
                             </div>
                          '>
         <i class="far fa-bars"></i></button>
-    <button class="btn btn-outline-secondary my-1 d-lg-none d-block" type="button" data-toggle="modal" data-target="#menu_modal">
+     <button class="btn btn-outline-secondary m-1 d-lg-none d-block" type="button" style="width: 42px;" data-toggle="modal" data-target="#menu_modal">
         <i class="far fa-bars"></i></button>
-    <button class="btn btn-outline-secondary my-1" type="button" data-toggle="modal" data-target="#chat_modal" id="chat_modal_btn">
-        <i class="far fa-comments"></i>
-    </button>
+    </div>
+        #### two icon row closed
+    </div>
+    ### inner closed
 </div>
-</div>
-#### title toggling is in layout.mako
-<%include file="chat.mako"/>
-
+### icon block closed
 
 <div class="modal" tabindex="-1" role="dialog" id="menu_modal">
   <div class="modal-dialog" role="document">
@@ -61,7 +72,7 @@
                    ('Convert PDB file','/pdb','far fa-wrench'),
                    ('Name to PDB', '/name', 'far fa-id-badge'),
                    ('Convert custom mesh','/custom','far fa-mortar-pestle'),
-                   ('Primary documentation','/docs','far fa-books'),
+                   ('Documentation','/docs','far fa-books'),
                    ('Gallery','/gallery','far fa-palette'),
                    ('Github repository','https://github.com/matteoferla/PyMOL-to-NGL-transpiler','fab fa-github')
                    )
@@ -78,4 +89,3 @@
     </div>
   </div>
 </div>
-

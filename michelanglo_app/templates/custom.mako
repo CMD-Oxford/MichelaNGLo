@@ -194,7 +194,7 @@ $('#submit').click(function () {
     $('.invalid-feedback').hide();
 
     data = new FormData();
-    if (demo_obj) {data.append('demo_file',demo_obj);}
+    if (demo_obj) {data.append('demo_filename',demo_obj);}
     else { data.append( 'file', valid_value('#upload'));}
     var centroid = $("input[name='centroid']:checked").val();
     data.append('centroid',centroid);
@@ -212,11 +212,16 @@ $('#submit').click(function () {
         data:  data
     })
             .done(function (msg) {
-                ops.addToast('complete','Complete','Job compled successfully','bg-info');
-                $('.card-body > ul').append(msg);
+                if (msg.status === 'error') {
+                    ops.addToast('error','Error',msg.msg,'bg-danger');
+                }
+                else {
+                    ops.addToast('complete','Complete','Job compled successfully','bg-info');
+                    $('.card-body > ul').append(msg);
+                }
             })
             .fail(function (xhr) {
-                ops.addToast('error','Error','Serverside error','bg-danger');
+                ops.addErrorToast(xhr);
             })
 });
 

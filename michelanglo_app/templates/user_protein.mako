@@ -32,9 +32,9 @@
     <div class='col-12 col-lg-${columns_viewport} ${part_order[0]}'>
         <div class='card shadow'>
             <div class="card-body">
-                <div id="viewport" role="NGL" data-proteins='${proteinJSON|n}' data-backgroundcolor="${backgroundcolor}" ${data_other|n}>
+                <div id="viewport" role="NGL" data-proteins='${proteinJSON|h}' data-backgroundcolor="${backgroundcolor}" ${data_other|n}>
                     %if image:
-                        <img src="${image}" class="w-100"/>
+                        <img src="${image}" class="w-100" alt="user image"/>
                     %endif
                 </div>
             </div>
@@ -127,6 +127,7 @@
 <%include file='edit_modal/implement_modal.mako'/>
 <%include file='edit_modal/combine_modal.mako'/>
 <%include file='edit_modal/mutate_modal.mako'/>
+<%include file='edit_modal/initial_modal.mako'/>
     %if firsttime:
         <%include file='results/wrong.mako'/>
     %endif
@@ -150,7 +151,7 @@ ${loadfun|n}
 
 $(document).ready(function () {
     $('#save').click(function () {
-        NGL.getStage('viewport').makeImage({trim: true, antialias: true, transparent: false}).then(NGL.download);
+        NGL.getStage('viewport').makeImage({trim: true, antialias: true, transparent: false, factor:10}).then(NGL.download);
     });
 
     <%include file="edit_modal/implement_modal.js"/>
@@ -172,13 +173,25 @@ $(document).ready(function () {
 	    else {$('#viewport').parent().parent().css('top', 0);}
 	});
 
+    // fetch the pdbs
+    let asyncPDBs = ${str(async_pdbnames)|n};
+    let pagename = "${page}";
+    asyncPDBs.forEach(name => $.get('/async_pdb', {identifier: pagename, name: name}).then(msg => window[name] = msg));
 
     %if not no_user:
         ###user mode is on.
         %if freelyeditable and not user:
-            $('#toaster').append(`<%include file="layout_components/toast.mako" args="toast_id='pleaseLogin', toast_title='Page editing', toast_body='This page can be edited by anyone with the link. However, to prevent vandalism you have to be signed in.', toast_bg='bg-info', toast_autohide='false'"/>`);
+            ops.addToast('pleaseLogin',
+                    'Page editing',
+                    'This page can be edited by anyone with the link. However, to prevent vandalism you have to be signed in.',
+                    'bg-info',
+                    false,5000);
             $('#pleaseLogin').toast('show');
         %endif
+        %if encryption_key:
+            window.encryption_key = "${encryption_key}";
+        %endif
+            window.page = "${page}"; // this is the uuid. not the redirect
 
         <%include file="edit_modal/combine.js"/>
         <%include file="edit_modal/mutate_modal.js"/>
@@ -230,6 +243,8 @@ $(document).ready(function () {
     // </%text>
 
     <%include file="results/uniprot_modal.js"/>
+    ///// Make buttons
+    UniprotFV.addUniprot();
 % endif
 
 }); //ready

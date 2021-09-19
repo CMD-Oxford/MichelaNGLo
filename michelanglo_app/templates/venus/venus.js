@@ -1,187 +1,42 @@
 //<%text>
+// venus main.mako imports uniprot_modal.js 's UniprotFV.
+// venus_class.js adds Venus class.
+// .venus-no-mike css classes do not get ported to Michelanglo
+// .venus-plain-mike css classes is ported as text to Michelanglo
+
+//window.venus = new Venus();
 
 
-class Venus {
-    constructor() {
-        this.prolink = ' class="prolink" data-target="#viewport" data-toggle="protein" ';
-        this.names = {
-            'A': 'Alanine (A/Ala)',
-            'B': 'Aspartate/asparagine (B/Asx)',
-            'C': 'Cysteine (C/Cys)',
-            'D': 'Aspartate (D/Asp)',
-            'E': 'Glutamate (E/Glu)',
-            'F': 'Phenylanine (F/Phe)',
-            'G': 'Glycine (G/Gly)',
-            'H': 'Histidine (H/His)',
-            'I': 'Isoleucine (I/Ile)',
-            'K': 'Lysine (K/Lys)',
-            'L': 'Leucine (L/Leu)',
-            'M': 'Methionine (M/Met)',
-            'N': 'Asparagine (N/Asn)',
-            'P': 'Proline (P/Pro)',
-            'Q': 'Glutamine (Q/Gln)',
-            'R': 'Arginine (R/Arg)',
-            'S': 'Serine (S/Ser)',
-            'T': 'Threonine (T/Thr)',
-            'U': 'Selenocysteine (U/Sel)',
-            'V': 'Valine (V/Val)',
-            'W': 'Tryptophan (W/Trp)',
-            'X': 'Any (X/Xaa)',
-            'Y': 'Tyrosine (Y/Tyr)',
-            'Z': 'Glutamate/glutamine (Z/Glx)',
-            '*': 'Stop (*/Stop)'
+/////////////////// DOM elements ////////////////////////////////////////////////////
+
+// species and uniprot searches are done by name.js
+// Also URL query is resolved by urlQueriest in name.js
+
+$(window).scroll(() => {
+    const card = $('#vieport_side');
+    let currentY = $(window).scrollTop();
+    let windowH = $(window).innerHeight();
+    let cardH = card.height();
+    let offsetY = card.offset().top - parseInt(card.css('top')) - 4;
+    const rcard = $('#results_card');
+    let maxY = rcard.offset().top + rcard.height();
+    //console.log(`currentY ${currentY}, windowH ${windowH}, cardH ${cardH}, offsetY ${offsetY}, maxY ${maxY}`)
+    let position = 0;
+    // the top is getting cut off:
+    if ((currentY > offsetY) && (currentY + windowH > offsetY + cardH)) {
+        // new position, without cutting off the bottom.
+        position = cardH > windowH ? currentY - offsetY - (cardH - windowH) : currentY - offsetY;
+        if (cardH + currentY > maxY) {
+            return 0; //no change. i.e. position = card.css('top')
         }
     }
-
-    reset() {
-        $('#results').hide();
-        $('#venus_calc').removeAttr('disabled');
-        $('result_title').html('<i class="far fa-dna fa-spin"></i> Loading');
-        $('#fv').html();
-        $('#results_mutalist').html('');
-    }
-
-    analysis(step) {
-        return $.post({
-            url: "venus_analyse", data: {
-                uniprot: uniprotValue,
-                species: taxidValue,
-                step: step,
-                mutation: $('#mutation').val()
-            }
-        }).fail(ops.addErrorToast)
-    }
-
-    card(title, text) {
-        return `<li class="list-group-item">
-                    <div class="row">
-                        <div class="col-12 col-md-3">
-                            <span class="font-weight-bold text-right align-middle">
-                            ${title}
-                             </span>
-                        </div>
-                        <div class="col-12 col-md-9 text-left border-left">
-                            ${text}
-                        </div>
-                    </div>
-                </li>`
-    }
-
-    protein() {
-        return venus.analysis('protein')
-            .fail(xhr => {
-                $('#venus_calc').removeAttr('disabled');
-                ops.addErrorToast(xhr)
-            })
-            .done(msg => {
-                $('#venus_calc').removeAttr('disabled');
-                if (msg.error) {
-                    $('#error_' + msg.error).show();
-                    $('#' + msg.error).addClass('is-invalid');
-                    ops.addToast('error', 'Error - ' + msg.error, '<i class="far fa-bug"></i> An issue arose analysing the results.<br/>' + msg.msg, 'bg-warning');
-                } else {
-                    this.mutation();
-                    window.protein = msg.protein;
-
-                    //this.analysis('fv') is the same as get_uniprot but utilising the protein data.
-                    $('#results').show(500, () => this.analysis('fv').done(msg => eval(msg)));
-                    $('html, body').animate({scrollTop: $('#results').offset().top}, 2000);
-                    $('#result_title').html(`${protein.gene_name} ${protein._mutation} <small>(${protein.recommended_name})</small>`);
-                }
-            })
-    }
-
-    mutation() {
-        return this.analysis('mutation').done(msg => {
-            const mutalist = $('#results_mutalist');
-            if (msg.error) {
-                ops.addToast('error', 'Error - ' + msg.error, '<i class="far fa-bug"></i> An issue arose analysing the results.<br/>' + msg.msg, 'bg-warning');
-            } else {
-                this.structural();
-                window.mutation = msg.mutation;
-                // rdkit images
-                let mutationtext = `<span ${this.prolink} data-focus="residue" data-load="wt" data-selection="${mutation.residue_index}:A">
-                                            ${this.names[mutation.from_residue]} at position ${mutation.residue_index}</span> is mutated to
-                                      <span ${this.prolink} data-focus="residue" data-load="mut" data-selection="${mutation.residue_index}:A">${this.names[mutation.to_residue]}</span>
-                                      <div class="row">
-                                            <div class="col-6"><img src="/static/aa/${mutation.from_residue}${mutation.to_residue}.svg" width="100%">
-                                            <p>Differing atoms in  ${this.names[mutation.from_residue]} highlighted in red</p></div>
-                                            <div class="col-6"><img src="/static/aa/${mutation.to_residue}${mutation.from_residue}.svg" width="100%">
-                                            <p>Differing atoms in  ${this.names[mutation.to_residue]} highlighted in red</p></div>
-                                        </div>`;
-                mutalist.append(this.card('Mutation', mutationtext));
-                // apriori
-                let aprioritext = mutation.apriori_effect;
-                if (mutation.to_residue === '*') {
-                    aprioritext += `
-                                                                            <span ${this.prolink} data-focus="domain" data-selection="1-${mutation.residue_index}:A">remnant</span>
-                                                                            and <span ${this.prolink} data-focus="domain" data-selection="${mutation.residue_index}-99999:A">lost</span>`
-                }
-                mutalist.append(this.card('Effect independent of structure', aprioritext));
-                //structural card
-                // TO COPYPASTE
-
-                //Features
-                let locationtext = `<p>The mutation is ${mutation.position_as_protein_percent}% along the protein.</p>`
-                if (mutation.features_near_mutation.length) {
-                    locationtext += '<ul>';
-                    locationtext += mutation.features_near_mutation.map(v => `<li>(${JSON.stringify(v)}</li>`).join('');
-                    locationtext += '</ul>';
-                }
-                mutalist.append(this.card('Location', locationtext));
-
-                mutalist.append(this.card('Domain detail', 'To Do figure out how to mine what the domain does. See notes "domain_function".'));
-
-                //gnomAD
-                if (mutation.gnomAD_near_mutation.length) {
-                    let gnomADtext = '<p>Structure independent, sequence proximity.</p>';
-                    gnomADtext += '<ul>';
-                    gnomADtext += mutation.gnomAD_near_mutation.map(v => `<li>(${JSON.stringify(v)}</li>`).join('');
-                    gnomADtext += '</ul>';
-                    mutalist.append(this.card('gnomAD', gnomADtext));
-                }
-
-                let exttext = `<a href="https://www.uniprot.org/uniprot/${uniprotValue}" target="_blank">Uniprot:${uniprotValue} <i class="far fa-external-link-square"></i></a> &mdash;
-                                                                        <a href="https://www.rcsb.org/pdb/protein/${protein.uniprot}" target="_blank">PDB:${uniprotValue} <i class="far fa-external-link-square"></i></a> &mdash;
-                                                                        <a href="https://gnomAD.broadinstitute.org/gene/${protein.gene_name}" target="_blank">gnomAD:${protein.gene_name} <i class="far fa-external-link-square"></i></a>`;
-                mutalist.append(this.card('External links', exttext));
-            }
-        })
-    }
-
-    structural() {
-        return this.analysis('structural').done(msg => {
-            const mutalist = $('#results_mutalist');
-            if (msg.error) {
-                ops.addToast('error', 'Error - ' + msg.error, '<i class="far fa-bug"></i> An issue arose analysing the results.<br/>' + msg.msg, 'bg-warning');
-            } else {
-                window.structural = msg.structural;
-                if (!!structural.coordinates.length) {
-                    NGL.specialOps.multiLoader('viewport', [{ type: "data", value: structural.coordinates, ext: 'pdb', chain: 'A'}]);
-                    //NGL.getStage().loadFile(new Blob([structural.coordinates, {type: 'text/plain'}]), {, firstModelOnly: true})
-                }
-                let strloctext = `<p>Chosen model: ${structural.code}</p>`;
-                strloctext += `<p>${(structural.buried) ? 'buried' : 'surface'} ${structural.SS} (RSA: ${structural.RSA})</p>`;
-                strloctext += `<p>${(structural.has_all_heavy_atoms) ? 'Resolved in crystal' : 'Some heavy atoms unresolved (too dynamic)'}</p>`;
-                if (!! structural.ligand_list.length) {
-                    strloctext += `<p>Closest ligand atom: ${structural.closest_ligand.match(/\[.*\]/)[0].slice(1,-1)} ${structural.distance_to_closest_ligand}</p>`;
-                }
-                mutalist.append(this.card('Structural character', strloctext));
+    card.css('top', position);
+    //console.log(`scrolltop: ${currentY} win height ${windowY} off: ${offsetY} card top: ${card.offset().top}`);
+});
 
 
-                let strtext = '<p>Structural neighbourhood.</p>';
-                strtext += '<ul>'+structural.neighbours.map(v => `<li>${v}</li>`).join()+'</ul>';
-                mutalist.append(this.card('Structural neighbourhood', strtext));
-            }
-        })
-    }
-}
-
-window.venus = new Venus();
-
-/////////////////// CALCULATE
 const vbtn = $('#venus_calc');
-$('#mutation').keyup(e => {
+mutation.keyup(e => {
     if ($(e.target).val().search(/\d+/) !== -1 && uniprotValue !== 'ERROR') {
         vbtn.show();
         $('#error_mutation').hide();
@@ -191,38 +46,158 @@ $('#mutation').keyup(e => {
         vbtn.hide();
     }
 });
+
 vbtn.click(e => {
-    venus.reset();
     if (taxidValue === 'ERROR') {
         $('#error_species').show();
         return 0;
     }
-    if (uniprotValue === 'ERROR') {
+    else if (taxidValue === 'pending') {
+        setTimeout(() => vbtn.click(), 500);
+        return 0;
+    }
+    else if (uniprotValue === 'ERROR') {
         $('#error_gene').show();
         return 0;
     }
-    if ($('#mutation').val().search(/\d+/) === -1) {
+    else if (uniprotValue === 'pending') {
+        setTimeout(() => vbtn.click(), 500);
+        return 0;
+    }
+    else if (mutation.val().search(/\d+/) === -1) {
         $('#error_mutation').show();
         return 0;
     }
-    $(e.target).attr('disabled', 'disabled');
-    venus.protein();
+    else {
+        window.venus = new Venus();
+        //venus.reset.call(venus);
+        $(e.target).attr('disabled', 'disabled');
+        venus.analyseProtein();
+    }
 });
 
-$('#new_analysis').click(venus.reset);
+$('#new_analysis').click(e => venus.reset.call(venus));
 
-const alert = text => `<div class="alert alert-danger"><b>To do</b> ${text}</div>`;
+// const alert = text => `<div class="alert alert-danger"><b>To do</b> ${text}</div>`;
+//
+// $('#results_mutalist').parent().append([//alert('rewire NGL viewport following screen'),
+//                               //alert('pipe structure to PDB offset fix.'),
+//                               //alert('structural route.'),
+//                               //alert('autoload the sequence chosen by Analyser.get_best_model'),
+//                               alert('URGENT!!! write documentation you idiot!'),
+//                               alert('add collapsed sequence viewer'),
+//                               alert('add rudimentary scoring metric to bump up entries'),
+//                               alert('deal with truncations'),
+//                               alert('b factor and disorder'),
+//                               alert('improve useless structurally class'),
+//                               alert('Mike exporter --make selective'),
+//                               alert('Fix load of swissmodel. ?! Why did this fix itself??'),
+//                               alert('cp the code for the domains from table ---what does this mean?'),
+//                              ]);
 
-$('#viewport').parent().parent().parent().append([alert('rewire NGL viewport following screen'),
-                                                  alert('pipe structure to PDB offset fix.'),
-                                                  alert('structural route.'),
-                                                  alert('autoload the sequence chosen by Analyser.get_best_model'),
-                                                  alert('write documentation md!'),
-                                                  alert('cp the code for the domains from table'),
-                                                  alert('collapsed sequence viewer'),
-                                                  alert('Fix RDKit matched structures to not claim that a sp2 Carbon os the same as sp3!'),
-                                                  alert('Mike exporter')
+// for now....
+$('#report-btn').click(event => {
+    if (venus.structural === undefined) {
+        ops.addToast('patience', 'Please be patient', 'The analysis is not complete.', 'bg-warning');
+        return 0;
+    }
+    $('#createMikeModal').modal('show');
+    const mo = $('#modelOptions');
+    mo.html('');
+    myData.proteins.forEach((p, i) => mo.append(`
+        <div class="form-group form-check mb-0 ml-3">
+            <input type="checkbox" class="mikeProtChoice form-check-input" data-index="${i}" id="mikeProtChoice${i}">
+            <label class="form-check-label" for="mikeProtChoice${i}">${p.name}</label>
+        </div>
+        `));
+    // mark the currently selected one.
+    const current = $(`#modelOptions [data-index="${myData.currentIndices['viewport']}"]`);
+    current.addClass('is-valid');
+    current.prop( "checked", true );
+    current.prop( "disabled", true );
+    current.attr('title', 'Currently loaded');
+});
 
-                                                 ]);
+$('#createMike').click(event => {
+    // button that creates the Mike page. Not to be confused with createMikeModal, which is its modal
+    $(event.target).attr('disabled', 'disabled');
+    const text = $(event.target).html();
+    $(event.target).html('<i class="far fa-spinner fa-spin"></i> ' + text);
+    // get the chosen models
+    let wantedIndices = $('#modelOptions [type="checkbox"]:checked').toArray().map(v => $(v).data('index'));
+    // But always add the current:
+    wantedIndices.unshift(myData.currentIndices['viewport']);
+    // lets prevent duplication
+    wantedIndices = wantedIndices.filter((item, pos) => wantedIndices.indexOf(item) === pos);
+    venus.createPage(wantedIndices).then(() => {
+        $(event.target).attr('disabled', 'disabled');
+        $(event.target).html(text);
+    });
+});
+
+$('#showMutant').click(event => {
+        venus.alwaysShowMutant = $(event.target).prop('checked');
+        venus.showMutant();
+    }
+);
+
+$('#showLigands').click(event => {
+        venus.alwaysShowLigands = $(event.target).prop('checked');
+        venus.showLigands();
+    }
+);
+
+$('#changeByPage_fetch').click(event => {
+    const uuid = changeByPage.value.trim().split('/').pop();
+    if (uuid === '') {
+        $('#changeByPage').addClass('is-invalid');
+        return null
+    } else {
+        $('#changeByPage').removeClass('is-invalid');
+    }
+    window.venus.fetchMike(uuid);
+});
+
+/// this is very confusing. change_model is the button in change_modal
+$('#change_model').click(async event => {
+    // get params
+    const params = await Promise.all(Array.from(upload_params.files).map(f => f.text()));
+    //
+    if (upload_pdb.files.length !== 0) {
+        // file route
+        const f = upload_pdb.files[0];
+        const pdb = await f.text();
+        const name = f.name;
+        window.user_uploaded_data = {'pdb': pdb, 'name': name, 'params': params};
+        $('#change_model_btn').removeClass('btn-info');
+        $('#change_model_btn').addClass('btn-success');
+        // used by step 3.
+        // window.venus.analyseCustomFile(pdb, name, params);
+    } else if (!changeByPage_selector.hasAttribute('disabled')) {
+        const index = changeByPage_selector.selectedIndex;
+        const name = changeByPage_selector.options[index].value;
+        $.post({
+            url: "save_pdb", data: {
+                uuid: changeByPage.value,
+                index: index
+            }
+        }).fail(ops.addErrorToast)
+            .done(pdb => {
+                    const format = pdb.includes('_atom_site.Cartn_x') ? 'cif' : 'pdb';
+                    window.user_uploaded_data = {'pdb': pdb, 'name': name + '.' + format, 'params': params};
+                    $('#change_model_btn').removeClass('btn-info');
+                    $('#change_model_btn').addClass('btn-success');
+                }
+            );
+    } else {
+        ops.addToast('errorate', 'Invalid', 'Nothing provided.', 'bg-warning');
+        $('#change_model_btn').removeClass('btn-info');
+        $('#change_model_btn').removeClass('btn-success');
+        $('#change_model_btn').addClass('btn-warning');
+        throw 'Nothing given!';
+    }
+    $('#change_modal').modal('hide');
+});
+
 
 //</%text>

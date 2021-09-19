@@ -1,5 +1,6 @@
 process.on('unhandledRejection', up => { throw up });
 //required!
+// if it crashes and complains about no sandbox try `export PUPPETEER_CHROME=/bin/chromium-browser` for dev'ing
 const puppeteer = require('puppeteer');
 const fs = require('fs');
 const uuid = process.argv[2];
@@ -9,7 +10,8 @@ const timeout = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 //console.log(`Checking links for ${uuid}`);
 
 (async () => {
-    const browser = process.env.PUPPETEER_CHROME ? await puppeteer.launch({executablePath: process.env.PUPPETEER_CHROME}) : await puppeteer.launch();
+    //process.env.PUPPETEER_CHROME ? await puppeteer.launch({executablePath: process.env.PUPPETEER_CHROME}) : ...
+    const browser = await puppeteer.launch({args: ['--no-sandbox', '--disable-setuid-sandbox']});
     const page = await browser.newPage();
     const url = `http://localhost:8088/data/${uuid}?columns_viewport=6`;
     let labels = ['Initial view'];

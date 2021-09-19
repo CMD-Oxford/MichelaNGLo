@@ -1,4 +1,4 @@
-function loadfun (protein) {
+function ${funname} (protein) {
     var stage=NGL.getStage('${viewport}'); //alter if not using multiLoader.
 
     //define colors
@@ -108,8 +108,10 @@ function loadfun (protein) {
         %for d in structure.distances:
     protein.addRepresentation( "distance", { atomPair: [
                 %for p in d['pairs']:
-    ["${p['atom_A'].resi}:${p['atom_A'].chain}.${p['atom_A'].name}","${p['atom_B'].resi}:${p['atom_B'].chain}.${p['atom_B'].name}"],
-                %endfor
+                    % if p['atom_A'] is not None and p['atom_B'] is not None:
+                        ["${p['atom_A'].resi}:${p['atom_A'].chain}.${p['atom_A'].name}","${p['atom_B'].resi}:${p['atom_B'].chain}.${p['atom_B'].name}"],
+                    % endif
+    %endfor
     ], colorValue: ${structure.swatch[d['color']].hex} } );
         %endfor
     %endif

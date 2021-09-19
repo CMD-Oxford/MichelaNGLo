@@ -12,7 +12,8 @@ import logging, json, os
 log = logging.getLogger(__name__)
 
 from . import custom_messages, votes
-from ._common_methods import is_malformed, is_js_true
+from .common_methods import is_malformed, is_js_true
+from .buffer import system_storage
 
 @view_config(route_name='userdata', renderer="../templates/user_protein.mako")
 def userdata_view(request):
@@ -27,11 +28,26 @@ def redirect_view(request):
     :return:
     """
     pagename = Doi.reroute(request, request.matchdict['id'])
-    return get_userdata(request, pagename)
+    if pagename is not None:
+        log.info(f'{User.get_username(request)} is looking at a r-page "{request.matchdict["id"]}" ({pagename})')
+        return get_userdata(request, pagename)
+    else:
+        log.info(f'{User.get_username(request)} is looking at a r-page "{request.matchdict["id"]}" that does not exist.')
+        request.response.status_int = 400
+        response_settings = {'project': 'Michelanglo', 'user': request.user,
+                             'page': pagename,
+                             'custom_messages': json.dumps(custom_messages),
+                             'meta_title': 'Michelaɴɢʟo: sculpting protein views on webpages without coding.',
+                             'meta_description': 'Convert PyMOL files, upload PDB files or submit PDB codes and ' + \
+                                                 'create a webpage to edit, share or implement standalone on your site',
+                             'meta_image': '/static/tim_barrel.png',
+                             'meta_url': 'https://michelanglo.sgc.ox.ac.uk/'
+                             }
+        return render_to_response("../templates/404.mako", response_settings, request)
 
 def get_userdata(request, pagename):
     log.info(f'{User.get_username(request)} is looking at a page {pagename}')
-    page = Page.select(request, pagename)
+    page = Page.select(request.dbsession, pagename)
     verdict = permission(request, page, 'view', key_label='key')
     if 'mode' in request.params and request.params['mode'] == 'json':
         json_mode = True
@@ -59,6 +75,9 @@ def get_userdata(request, pagename):
     else:
         ## yay! you are not a terrorist!
         settings = page.settings
+        if settings['page'] != page.identifier:
+            log.error(f"This should not have happened: loading {page.identifier} gave {settings['page']}")
+        settings['public'] = page.privacy  # Legacy fix.
         if page.encrypted:
             settings['encryption_key'] = request.params['key']   ### For the Mako!
             settings['key'] = request.params['key']  #to be fixed...
@@ -150,7 +169,6 @@ def get_userdata(request, pagename):
                 r['time'] = str(r['time'])  #patch. please delete me soon.
             return render_to_response("json", settings, request)
         else:
-
             settings['meta_title'] = 'Michelaɴɢʟo user-created page: ' + settings['title']
             settings['meta_description'] = settings['description'][:150]
             settings['meta_image'] = f'https://michelanglo.sgc.ox.ac.uk/thumb/{page.identifier}'
@@ -167,13 +185,53 @@ def get_userdata(request, pagename):
                 settings['descr_mdowned'] = re.sub('^\<h2\>(.*?)\<\/h2\>', '', settings['descr_mdowned'])
             else:
                 settings['descr_header'] = ''
+            # asynchronous PDB loading. Bad if first page has an overlay.
+            settings['async_pdbnames'] = []
+            if 'async_pdb' in settings and settings['async_pdb'] and len(settings['pdb']) > 1:
+                for name, block in settings['pdb'][1:]:
+                    print(settings['page']+name)
+                    system_storage[settings['page']+name] = block
+                    settings['async_pdbnames'].append(name)
+                settings['pdb'] = [settings['pdb'][0]]
+            else:
+                settings['async_pdb'] = False
             # return
             return settings   ## renders via the "../templates/user_protein.mako"
+
+
+
+@view_config(route_name='async_pdb', renderer="string")
+def async_pdb(request):
+    """
+    This is not redundant with save. This is meant to be a quick async loading.
+    """
+    malformed = is_malformed(request, 'identifier', 'name')
+    if malformed:
+        request.response.status_int = 400
+        return ''
+    identifier = request.params['identifier']
+    name = request.params['name']
+    if identifier+name in system_storage: # it did not expired.
+        block = system_storage[identifier + name]
+        del system_storage[identifier + name]
+        return block
+    else:
+        get_userdata(request, identifier)
+        if identifier + name in system_storage: #this should not happend!
+            log.warning(f'{User.get_username(request)} is looking at a page whose cache was deleted (Impossible)')
+            block = system_storage[identifier + name]
+            del system_storage[identifier + name]
+            return block
+        else: # nope. It is wrong.
+            log.info(f'{User.get_username(request)} requested an incorrect pdb {identifier} + {name}')
+            request.response.status_int = 404
+            return ''
+
 
 @view_config(route_name='monitor', renderer="../templates/monitor.mako")
 def monitor(request):
     pagename = request.matchdict['id']
-    page = Page.select(request, pagename)
+    page = Page.select(request.dbsession, pagename)
     response_settings = {'project': 'Michelanglo', 'user': request.user,
                          'page': pagename,
                          'custom_messages': json.dumps(custom_messages),
@@ -215,7 +273,7 @@ def monitor(request):
 @view_config(route_name='userthumb')
 def thumbnail(request):
     pagename = request.matchdict['id']
-    page = Page.select(request, pagename)
+    page = Page.select(request.dbsession, pagename)
     verdict = permission(request, page, 'view', key_label='key')
     if verdict['status'] != 'OK' or not page.existant:
         request.response.status = 200 # we would block facebook and twitter otherwise as they redirect.
@@ -233,36 +291,42 @@ def thumbnail(request):
     response.encode_content(encoding='identity') #gzip is pointless on png
     return response
 
-@view_config(route_name='save_pdb', renderer='string')
+@view_config(route_name='save_pdb', renderer='json')
 def save_pdb(request):
+    """Should have been called download PDB file"""
     malformed = is_malformed(request, 'uuid', 'index')
     if malformed:
         return {'status': malformed}
-    if not request.params['index'].isdigit():
+    if isinstance(request.params['index'], str) and request.params['index'] != '-1' and not request.params['index'].isdigit():
         request.response.status = 400
-        return {'status': 'index must be number'}
-    page = Page.select(request, request.params['uuid'])
+        return {'status': 'index must be number', 'error': f"{request.params['index']} ({type(request.params['index'])}) is not a digit"}
+    page = Page.select(request.dbsession, request.params['uuid'])
     index = int(request.params['index'])
-    verdict = permission(request, page, key_label='key')
-    if verdict['status'] == 'OK':
+    verdict = permission(request, page, key_label='key', mode='view')
+    if verdict['status'] != 'OK':
+        return verdict
+    else:
         settings = page.load().settings
         protein = json.loads(settings['proteinJSON'])
-        if index > len(protein):
+        if index == -1:
+            return {'status': 'number of structures', 'number': len(protein), 'definitions': protein}
+        elif index > len(protein):
             request.response.status = 400
             return {'status': f'index exceeds {len(protein)}'}
-        p = protein[index]
-        pdb = settings['pdb']
-        if p['type'] == 'rcsb': #rcsb PDB code
-            return HTTPFound(location=f"https://files.rcsb.org/download/{p['value']}.cif")
-        elif p['type'] == 'file': #external file
-            return HTTPFound(location=p['value'])
-        elif isinstance(pdb, str):
-            log.warning(f'{page} has a pre-beta PDB!??')
-            return pdb
         else:
-            return pdb[0][1] #pdb is
-    else:
-        return verdict
+            p = protein[index]
+            pdb = settings['pdb']
+            if p['type'] == 'rcsb': #rcsb PDB code
+                return HTTPFound(location=f"https://files.rcsb.org/download/{p['value']}.cif")
+            elif p['type'] == 'url': #external file
+                return HTTPFound(location=p['value'])
+            elif isinstance(pdb, str):
+                log.warning(f'{page} has a pre-beta PDB!??')
+                request.override_renderer = 'string'
+                return pdb
+            else:
+                request.override_renderer = 'string'
+                return pdb[0][1] #pdb is
 
 
 

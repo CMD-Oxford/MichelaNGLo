@@ -6,6 +6,7 @@ def includeme(config):
     #config.add_static_view('favicon.ico','static/favicon.ico', cache_max_age=3600)
     config.add_route('favicon','/favicon.ico')
     config.add_route('home', '/')   ##the home page
+    config.add_route('michelanglo', '/michelanglo')   ##the michelanglo home page from venus
     config.add_route('home_text', '/verbose') ### the old home page
     config.add_route('home_gimmicky', '/gimmicky') ### the newer home page
     config.add_route('custom', '/custom') ### mesh converter
@@ -41,9 +42,15 @@ def includeme(config):
     config.add_route('get_pages', '/get_pages')
     config.add_route('admin', '/admin')
     config.add_route('vote', '/vote')
+    config.add_route('async_pdb', '/async_pdb')
     config.add_route('venus', '/venus')
+    config.add_route('venus_multiple', '/venus_multiple')
+    config.add_route('venus_multianalyse', '/venus_multianalyse')
     config.add_route('venus_random', '/venus_random')
     config.add_route('venus_analyse', '/venus_analyse')
+    config.add_route('venus_create', '/venus_create')
+    config.add_route('venus_transcript', '/venus_transcript')
+    config.add_route('venus_debug', '/venus_debug')
     config.add_route('extended', '/michelanglo.js')
     config.add_route('extended_menu', '/michelanglo_menu.js')
     config.add_route('userdata', '/data/{id}')

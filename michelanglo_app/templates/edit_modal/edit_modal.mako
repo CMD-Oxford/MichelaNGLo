@@ -49,6 +49,9 @@
                         <span data-toggle="tooltip" data-trigger="hover"  title="Create links that control the protein view (prolinks)">
                             <%include file="../markup/markup_builder_btn.mako"/>
                         </span>
+                       <span data-toggle="tooltip" data-trigger="hover"  title="Alter initial view">
+                           <button type="button" class="btn btn-outline-info" data-toggle="modal" data-target="#initial_modal" id="initial_btn"><i class="far fa-wrench"></i> Alter loading view</button>
+                       </span>
                        <span data-toggle="tooltip" data-trigger="hover"  title="Create point mutations in this structure &mdash;mutant structure will appear as a different model (see fa-load in documentation)">
                             <button type="button" class="btn btn-outline-info" data-toggle="modal" data-target="#mutate_modal" id="mutate_modal_btn"><i class="far fa-biohazard"></i> Make mutations</button>
                        </span>
@@ -71,7 +74,7 @@
                                 Revert to a previous edit
                               </button>
                               <div class="dropdown-menu" aria-labelledby="revision_button" id="revision_menu">
-                                  %for i, rev in enumerate(revisions):
+                                  %for i, rev in reversed(list(enumerate(revisions))):
                                       <a class="dropdown-item" href="#" onclick="loadPastVersion(${i})">${rev['time']} &mdash;${rev['user']}</a>
                                   %endfor
                               </div>
@@ -151,6 +154,16 @@
                          %endif
                             >
                   <label class="custom-control-label" for="model">Model warning</label>
+                </div>
+                <hr/>
+                <p>Multiple structures can be downloaded after loading the page. If your first view is an overlay disable this feature:</p>
+                <div class="custom-control custom-switch">
+                  <input type="checkbox" class="custom-control-input user-editable-state" id="asyncPDB"
+                         %if async_pdb:
+                            checked
+                         %endif
+                            >
+                  <label class="custom-control-label" for="asyncPDB">Load structures beyond the first asynchronously</label>
                 </div>
                 <hr/>
                 <%include file="page_users.mako"/>

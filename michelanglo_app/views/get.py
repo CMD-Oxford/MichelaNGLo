@@ -1,11 +1,12 @@
 from pyramid.view import view_config
 from pyramid.renderers import render_to_response
-from ..models import Page, User, Doi
+from ..models import Page, User, Doi, Publication
 import os
 
 import logging
 log = logging.getLogger(__name__)
-from ._common_methods import is_malformed, notify_admin
+from .common_methods import is_malformed, notify_admin
+from ..scheduler import Entasker
 
 from . import custom_messages, votes
 
@@ -46,7 +47,7 @@ def get_ajax(request):
     ####### get the implementation code.
     elif request.params['item'] == 'implement':
         ## should non editors be able to see this? I assume that if they get the page uuid right they should.
-        page = Page.select(request, request.params['page'])
+        page = Page.select(request.dbsession, request.params['page'])
         if not page:
             return render_to_response("../templates/part_error.mako", {'error': '404'}, request)
         elif not page.existant:
@@ -59,6 +60,13 @@ def get_ajax(request):
             pass #
         settings = page.load().settings
         return render_to_response("../templates/results/implement.mako", settings, request)
+    elif request.params['item'] == 'swissmodel':
+        url = request.params['url']
+        if url.find('https://swissmodel.expasy.org/') != 0:
+            request.response.status = 403
+            return {'status': 'Not a swissmodel url'}
+        else:
+            return request.get(url).text()
     else:
         request.response.status = 400
         log_it()
@@ -74,6 +82,7 @@ def get_pages(request):
     user = request.user
     log.info(f'{User.get_username(request)} request API view of pages')
     data = {}
+    to_list = lambda x: [p.identifier for p in x]  ## crap name. converts the objects to names only.
     if not user:
         data['owned'] = 'not logged in'
         data['visited'] = 'not logged in'
@@ -87,23 +96,25 @@ def get_pages(request):
                            'deleted_entries': [p.identifier for p in request.dbsession.query(Page) if not p.existant]}
         else:
             data['all'] = 'RESTRICTED'
-        to_list = lambda x: [p.identifier for p in x]  ## crap name. converts the objects to names only.
-        data['owned'] = to_list(user.owned.select(request))
-        data['visited'] = to_list(user.visited.select(request))
+        data['owned'] = to_list(user.owned.select(request.dbsession))
+        data['visited'] = to_list(user.visited.select(request.dbsession))
     data['public'] = to_list(request.dbsession.query(Page).filter(Page.privacy != 'private').all())
     return data
 
 @view_config(route_name='set', renderer='json')
 def set_ajax(request):
     """
-    Admin only operations.
+    Admin only operations. In future this may change to ``admin`` (TODO)
+
     :param request: must contain 'item' key.
+
     * item = msg. set a message based on the value of the keys 'title','descr','bg'
     * item = clear_msg. clear msg
     * item = terminate. kills the mother thread. requires the key 'code' containing the same value as the env variable SECRETCODE
     * item = protection. protects page 'page'
     * item = deprotection. guess what this does...
     * item = shorten. 'short' 'long' results in setting up /r/short redirect to /data/long
+
     :return: json ('status' as one key)
     """
     if not request.user or request.user.role != 'admin':
@@ -137,7 +148,7 @@ def set_ajax(request):
         elif request.params['item'] == 'protection':
             pagename = request.params['page']
             log.info(f'{User.get_username(request)} changed the monitoring of page {pagename}.')
-            page = Page.select(request, pagename)
+            page = Page.select(request.dbsession, pagename)
             if not page.protected:
                 # to do change to scheduler.
                 os.system(f'node michelanglo_app/monitor.js {pagename} &')
@@ -146,7 +157,7 @@ def set_ajax(request):
         elif request.params['item'] == 'deprotection':
             pagename = request.params['page']
             log.info(f'{User.get_username(request)} changed the monitoring of page {pagename}.')
-            page = Page.select(request, pagename)
+            page = Page.select(request.dbsession, pagename)
             page.protected = False
             for file in os.listdir('michelanglo_app/user-data-monitor'):
                 if file.find(pagename) == 0:
@@ -158,13 +169,31 @@ def set_ajax(request):
                 return {'status': malformed}
             longname = request.params['long']
             shortname = request.params['short']
-            long = Page.select(request, longname)
+            long = Page.select(request.dbsession, longname)
             if request.dbsession.query(Doi).filter(Doi.short == shortname).first() is not None:
                 return {'status': f'{shortname} taken already.'}
             redirect = Doi(long=longname, short=shortname)
             request.dbsession.add(redirect)
             log.info(f'{User.get_username(request)} made shorter page {longname} as {shortname}.')
             return {'status': 'success', 'long': longname, 'short': shortname}
+        elif request.params['item'] == 'publication':
+            malformed = is_malformed(request, 'identifier', 'url')
+            # options include ('identifier', 'url', 'authors', 'year', 'title', 'journal', 'issue')
+            if malformed:
+                return {'status': malformed}
+            publication = Publication.from_request(request)
+        elif request.params['item'] == 'task':
+            malformed = is_malformed(request, 'task')
+            if malformed:
+                return {'status': malformed}
+            taskname = request.params['task']
+            try:
+                Entasker.run(taskname)
+                log.info(f'Admin directed task {taskname} completed.')
+                return {'status': 'success'}
+            except Exception as error:
+                log.warning(f'Admin directed task {taskname} failed - {error.__class__.__name__}: {error}')
+                return {'status': 'error', 'msg': f'{error.__class__.__name__}: {error}'}
         else:
             return {'status': 'unknown cmd'}
 
@@ -172,7 +201,7 @@ def set_ajax(request):
 
 @view_config(route_name='vote', renderer='json')
 def vote(request):
-    malformed = is_malformed(request, 'topic','direction')
+    malformed = is_malformed(request, 'topic', 'direction')
     if malformed:
         return {'status': malformed}
     topic = request.params['topic'][:100]
