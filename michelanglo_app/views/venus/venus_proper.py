@@ -5,9 +5,10 @@ from __future__ import annotations
 from ..uniprot_data import *
 # ProteinCore organism human uniprot2pdb
 from michelanglo_protein import ProteinAnalyser, Mutation, ProteinCore, Structure
+from michelanglo_transpiler import PyMolTranspiler  # used solely for temp folder
 
 from ...models import User, Page  ##needed solely for log.
-from ..common_methods import is_malformed, notify_admin, get_pdb_block_from_request, is_alphafold_taxon
+from ..common_methods import is_malformed, get_pdb_block_from_request, is_alphafold_taxon
 from ..user_management import permission
 from .. import custom_messages
 
@@ -15,8 +16,9 @@ from typing import Optional, Any, List, Union, Tuple, Dict
 import random, traceback, sys
 from pyramid.view import view_config, view_defaults
 from pyramid.renderers import render_to_response
-from ..common_methods import notify_admin
+from ..common_methods import Comms
 import pyramid.httpexceptions as exc
+from time import sleep
 
 import json, os, logging, operator
 
@@ -44,17 +46,18 @@ class Venus(VenusBase):
         if 'mutation' not in self.request.params or 'uniprot' not in self.request.params:
             return None
         if str(self.request.params['uniprot']) == '9606' or str(self.request.params['mutation']) == '9606':
-            raise ValueError('Chrome autofill')
+            raise ValueError('Chrome autofill')  # this is uncaught
         settings = self.get_user_modelling_options()
         concatenation = self.request.params['uniprot'] + \
                         self.request.params['mutation'] + \
                         '-'.join(map(str, settings.values()))
+        log.debug(f'request handle: {str(hash(concatenation))}')
         return str(hash(concatenation))
 
     ############################### server main page
     @view_config(renderer="../../templates/venus/venus_main.mako")
     def main_view(self):
-        return {'user': self.request.user,
+        return {'user':          self.request.user,
                 'mutation_mode': 'main',
                 **self.generic_data}
 
@@ -75,7 +78,7 @@ class Venus(VenusBase):
                 i = random.randint(pdb.x, pdb.y)
                 # the to_resn cannot be the same as original or *
                 to_resn = random.choice(list(set(Mutation.aa_list) - {'*', protein.sequence[i - 1]}))
-                return {'name': name, 'uniprot': uniprot, 'taxid': '9606', 'species': 'human',
+                return {'name':     name, 'uniprot': uniprot, 'taxid': '9606', 'species': 'human',
                         'mutation': f'p.{protein.sequence[i - 1]}{i}{to_resn}'}
             except IndexError:
                 log.error(f'Impossible... pdb.x out of bounds in unicode for gene {uniprot}')
@@ -117,13 +120,13 @@ class Venus(VenusBase):
                 self.reply['msg'] = str(err)
             log.warning(f'Venus error {err.__class__.__name__}: {err}')
             if 'Malformed error' not in str(err):
-                notify_admin(f'Venus error {err.__class__.__name__}: {err}')
+                Comms.notify_admin(f'Venus error {err.__class__.__name__}: {err}')
                 log.debug(traceback.format_exc())
             return self.reply
 
     def has(self, key: Optional[str] = None) -> bool:
         # checks whether the protein object has a filled value (not the reply!)
-        if self.handle not in system_storage:  # this is already done
+        if self.handle not in system_storage:  # this is not already done
             return False
         elif key is None:
             return True
@@ -134,13 +137,15 @@ class Venus(VenusBase):
         else:
             return True
 
+    # ------ Steps -----------------------------------------------------------------------------------------------------
+
     @property
     def steps(self):
         # this is strictly an instance attribute not a class one.
-        return {'protein': self.protein_step,
-                'mutation': self.mutation_step,
+        return {'protein':    self.protein_step,
+                'mutation':   self.mutation_step,
                 'structural': self.structural_step,
-                'ddG': self.ddG_step,
+                'ddG':        self.ddG_step,
                 'ddG_gnomad': self.ddG_gnomad_step}
 
     def do_step(self, step):
@@ -161,7 +166,7 @@ class Venus(VenusBase):
                 self.protein_step()
             protein = system_storage[self.handle]
             return render_to_response(os.path.join("..", "..", "templates", "results", "features.js.mako"),
-                                      {'protein': protein,
+                                      {'protein':     protein,
                                        'featureView': '#fv',
                                        'include_pdb': False,
                                        'alphafolded': is_alphafold_taxon(self.request.params['species'])
@@ -190,7 +195,7 @@ class Venus(VenusBase):
         Check mutations are valid
         """
         self.start_timer()
-        if self.has():  # this is already done (very unlikely/
+        if self.has():  # this is already done?
             protein = system_storage[self.handle]
         else:
             log.info(f'Step 1 analysis requested by {User.get_username(self.request)}')
@@ -199,29 +204,25 @@ class Venus(VenusBase):
             mutation_text = self.request.params['mutation']
             ## Do analysis
             mutation = Mutation(mutation_text)
-            if self.request.user and self.request.user.role == 'admin':
-                # debug option basically not open to all as cycle = 1_000 could be an issue...
-                rosetta_keys = ['scorefxn_name', 'radius', 'cycles', 'use_pymol_for_neighbours']
-                rosetta_settings = {k: self.request.params[k] for k in rosetta_keys if k in self.request.params}
-            else:
-                rosetta_settings = {}
             protein = ProteinAnalyser(uniprot=uniprot,
-                                      taxid=taxid,
-                                      **rosetta_settings)
+                                      taxid=taxid)
+            assert protein.exists(), f'{uniprot} of {taxid} is absent'
             protein.load()
             protein.mutation = mutation
+            setattr(protein, 'current_step_complete', False)  # venus specific
         # assess
         if not protein.check_mutation():
             log.info('protein mutation discrepancy error')
             discrepancy = protein.mutation_discrepancy()
             self.reply = {**self.reply,
-                          'error': 'mutation',
-                          'msg': discrepancy,
+                          'error':  'mutation',
+                          'msg':    discrepancy,
                           'status': 'error'}
             raise VenusException(discrepancy)
         else:
             system_storage[self.handle] = protein
             self.reply['protein'] = self.jsonable(protein)
+        protein.current_step_complete = True
         self.stop_timer()
 
     ### STEP 2
@@ -234,21 +235,23 @@ class Venus(VenusBase):
         ## has the previous step been done?
         if not self.has():
             self.protein_step()
-        # if protein.mutation has already run??
+        # if protein.mutation has already run it still does it again...
         # no shortcut useful.
         protein = system_storage[self.handle]
+        protein.current_step_complete = False
         protein.predict_effect()
         featpos = protein.get_features_at_position(protein.mutation.residue_index)
         featnear = protein.get_features_near_position(protein.mutation.residue_index)
         pos_percent = round(protein.mutation.residue_index / len(protein) * 100)
         self.reply['mutation'] = {**self.jsonable(protein.mutation),
-                                  'features_at_mutation': featpos,
-                                  'features_near_mutation': featnear,
+                                  'features_at_mutation':        featpos,
+                                  'features_near_mutation':      featnear,
                                   'position_as_protein_percent': pos_percent,
-                                  'gnomAD_near_mutation': protein.get_gnomAD_near_position()}
+                                  'gnomAD_near_mutation':        protein.get_gnomAD_near_position()}
+        protein.current_step_complete = True
         self.stop_timer()
 
-        ### STEP 3
+    ### STEP 3
     def structural_step(self, structure=None, retrieve=True):
         """
         runs protein.analyse_structure() iteratively until it works.
@@ -259,49 +262,206 @@ class Venus(VenusBase):
         if not self.has():
             self.mutation_step()
         protein = system_storage[self.handle]
-        if not self.has('structural'):  # this step has not been run before.
+        # this is slightly odd because structural None is either not done or no model
+        if self.has('structural'):
+            self.reply['structural'] = self.jsonable(protein.structural)
+            self.reply['has_structure'] = True
+        elif protein.current_step_complete is False:
+            while protein.current_step_complete is False: # polling
+                log.debug('Waiting for structural_step')
+                sleep(5)
+            return self.structural_step(structure, retrieve) # retry
+        else:
+            # this step has not been run before
+            protein.current_step_complete = False
             if structure is not None:  # user submitted structure.
                 protein.analyse_structure(structure=structure,
                                           **self.get_user_modelling_options()
                                           )
             else:
                 self.structural_workings(protein, retrieve)
-        if protein.structural:
-            self.reply['structural'] = self.jsonable(protein.structural)
-            self.reply['has_structure'] = True
-        else:
-            log.info('No structural data available')
-            self.reply['status'] = 'terminated'
-            self.reply['error'] = 'No crystal structures or models available.'
-            self.reply['msg'] = 'Structrual analyses cannot be performed.'
-            self.reply['has_structure'] = False
-            raise VenusException(self.reply['msg'])
+            if protein.structural:
+                self.reply['structural'] = self.jsonable(protein.structural)
+                self.reply['has_structure'] = True
+            else:
+                log.info('No structural data available')
+                self.reply['status'] = 'terminated'
+                self.reply['error'] = 'No crystal structures or models available.'
+                self.reply['msg'] = 'Structrual analyses cannot be performed.'
+                self.reply['has_structure'] = False
+                raise VenusException(self.reply['msg'])
+        protein.current_step_complete = True
         self.stop_timer()
+
+    ### Step 4
+    def ddG_step(self):
+        self.start_timer()
+        log.info(f'Step 4 analysis requested by {User.get_username(self.request)}')
+        # ------- get protein
+        if self.handle not in system_storage:
+            for fun in (self.protein_step, self.mutation_step, self.structural_step):
+                fun()
+                if 'error' in self.reply:
+                    return self.reply
+        protein = system_storage[self.handle]
+        # -------- analyse
+        if self.has('energetics'):
+            analysis = protein.energetics
+        elif protein.current_step_complete is False:
+            while protein.current_step_complete is False: # polling
+                log.debug('Waiting for ddG_step')
+                sleep(5)
+            return self.ddG_step()  # retry
+        else:
+            protein.current_step_complete = False
+            applicable_keys = ('scorefxn_name', 'outer_constrained', 'remove_ligands',
+                               'neighbour_only_score',
+                               'scaling_factor', 'prevent_acceptance_of_incrementor',
+                               'single_chain', 'radius', 'cycles')
+            user_options = self.get_user_modelling_options()
+            options = {k: v for k, v in user_options.items() if k in applicable_keys}
+            # radius and cycle minima are applied already
+            analysis = protein.analyse_FF(**options, spit_process=True)
+        if analysis is None:
+            self.log_if_error('pyrosetta step', 'likely segfault')
+        elif 'error' in analysis:
+            self.log_if_error('pyrosetta step', analysis)
+        else:
+            self.reply['ddG'] = analysis
+            # {ddG: float, scores: Dict[str, float], native:str, mutant:str, rmsd:int}
+        protein.current_step_complete = True
+        self.stop_timer()
+
+    ### Step 5
+    def ddG_gnomad_step(self):
+        log.info(f'Step 5 analysis requested by {User.get_username(self.request)}')
+        if self.handle not in system_storage:
+            status = self.protein_step()
+            if 'error' in status:
+                return status
+            status = self.mutation_step()
+            if 'error' in status:
+                return status
+        protein = system_storage[self.handle]
+        if self.has('energetics_gnomAD'):
+            analysis = protein.energetics_gnomAD
+        elif protein.current_step_complete is False:
+            while protein.current_step_complete is False: # polling
+                log.debug('Waiting for ddG_gnomad_step')
+                sleep(5)
+            return self.ddG_gnomad_step()  # retry
+        else:
+            protein.current_step_complete = False
+            applicable_keys = ('scorefxn_name', 'outer_constrained', 'remove_ligands',
+                               'scaling_factor',
+                               'single_chain', 'cycles', 'radius')
+            options = {k: v for k, v in self.get_user_modelling_options().items() if k in applicable_keys}
+            # speedy
+            options['cycles'] = 1
+            options['radius'] = min(6, options['radius'] if 'radius' in options else 6)
+            analysis = protein.analyse_gnomad_FF(**options, spit_process=True)
+        if analysis is None:
+            analysis = dict(error='likely segfault', msg='likely segfault')
+        if 'error' in analysis:  # it is a failure.
+            self.log_if_error('ddG_gnomad_step', analysis)
+            self.reply['status'] = 'error'
+            self.reply['error'] = 'pyrosetta step'
+            self.reply['msg'] = analysis['error']
+        else:
+            self.reply['gnomAD_ddG'] = analysis
+        protein.current_step_complete = True
+
+    ### STEP EXTRA
+    def extra_step(self, mutation, algorithm):
+        if self.has():
+            self.ddG_step()
+        protein = system_storage[self.handle]
+        protein.current_step_complete = False
+        log.info(f'Extra analysis ({algorithm}) requested by {User.get_username(self.request)}')
+        applicable_keys = ('scorefxn_name', 'outer_constrained', 'remove_ligands',
+                           'scaling_factor',
+                           'single_chain', 'cycles', 'radius')
+        options = {k: v for k, v in self.get_user_modelling_options().items() if k in applicable_keys}
+        self.reply = {**self.reply,
+                      **protein.analyse_other_FF(**options, mutation=mutation, algorithm=algorithm, spit_process=True)}
+        self.log_if_error('extra_step')
+        protein.current_step_complete = True
+
+    ### STEP EXTRA2
+    def phospho_step(self):
+        if self.has():
+            self.ddG_step()
+        protein = system_storage[self.handle]
+        protein.current_step_complete = False
+        log.info(f'Phosphorylation requested by {User.get_username(self.request)}')
+        coordinates = protein.phosphorylate_FF(spit_process=True)
+        if isinstance(coordinates, str):
+            self.reply['coordinates'] = coordinates
+        elif isinstance(coordinates, dict):
+            self.reply = {**self.reply, **coordinates}  # it is an error msg!
+        else:
+            self.reply = {**self.reply, 'status': 'error', 'error': 'Unknown', 'msg': 'No coordinates returned'}
+        self.log_if_error('phospho_step')
+        protein.current_step_complete = True
+
+    ### CHANGE STEP
+    def change_to_file(self, block, name, params: List[str] = ()):
+        # params is either None or a list of topology files
+        if self.has():
+            self.mutation_step()
+        protein = system_storage[self.handle]
+        protein.structural = None
+        protein.energetics = None
+        protein.current_step_complete = False
+        protein.rosetta_params_filenames = params
+        title, ext = os.path.splitext(name)
+        structure = Structure(title, 'Custom', 0, 9999, title,
+                              type='custom', chain="A", offset=0, coordinates=block)
+        structure.is_satisfactory(protein.mutation.residue_index)
+        self.structural_step(structure=structure)
+        protein.current_step_complete = True
+        return self.reply
+
+    # ----- inner methods ----------------------------------------------------------------------------------------------
 
     def get_user_modelling_options(self):
         """
         User dictated choices.
         """
-        user_modelling_options = {'allow_pdb': True,
-                                  'allow_swiss': True,
-                                  'allow_alphafold': True}
+        user_modelling_options = {'allow_pdb':       True,
+                                  'allow_swiss':     True,
+                                  'allow_alphafold': True,
+                                  'scaling_factor':  0.239  # this is the kJ/mol <--> kcal/mol "mystery" value
+                                  }
+
         # ------ booleans
-        for key in ['allow_pdb', 'allow_swiss', 'allow_alphafold', 'outer_constrained', 'remove_ligands','single_chain']:
+        for key in ['allow_pdb',
+                    'allow_swiss',
+                    'allow_alphafold',
+                    'outer_constrained',
+                    'neighbour_only_score',
+                    'prevent_acceptance_of_incrementor',
+                    'remove_ligands',
+                    'single_chain',
+                    'scaling_factor']:
             if key not in self.request.params:
                 pass
             else:
                 user_modelling_options[key] = self.request.params[key] not in (False, 0, 'false', '0')
         # ------ floats
-        for key in ['swiss_oligomer_identity_cutoff','swiss_monomer_identity_cutoff',
-                    'swiss_oligomer_qmean_cutoff','swiss_monomer_qmean_cutoff']:
+        for key in ['swiss_oligomer_identity_cutoff', 'swiss_monomer_identity_cutoff',
+                    'swiss_oligomer_qmean_cutoff', 'swiss_monomer_qmean_cutoff']:
             if key not in self.request.params:
                 pass  # defaults from defaults in protein class. This must be an API call.
             else:
                 user_modelling_options[key] = float(self.request.params[key])
         # ----- for ddG calculations.
-        for key, minimum, maximum in (('cycles',1,5), ('radius',8, 15) ):
+        for key, minimum, maximum in (('cycles', 1, 5), ('radius', 8, 15)):
             if key in self.request.params:
                 user_modelling_options[key] = max(minimum, min(maximum, int(self.request.params[key])))
+            else:
+                user_modelling_options[key] = minimum
+                log.debug(f'No {key} provided...')
         # scorefxn... More are okay... but I really do not wish for users to randomly use these.
         allowed_names = ('ref2015', 'beta_july15', 'beta_nov16',
                          'ref2015_cart', 'beta_july15_cart', 'beta_nov16_cart')
@@ -320,7 +480,8 @@ class Venus(VenusBase):
         # try options
         # do not use the stored values of pdbs, but get the swissmodel ones (more uptodate)
         if retrieve:
-            # alphafold2
+            # if it is not a valid species nothing happens.
+            # if the gene is not valid... then this record is wrong.
             protein.add_alphafold2()  # protein::alphafold2_retrieval::FromAlphaFold2
             # swissmodel
             try:
@@ -331,7 +492,7 @@ class Venus(VenusBase):
                     raise error
                 msg = f'Swissmodel retrieval step failed: {error.__class__.__name__}: {error}'
                 log.critical(msg)
-                notify_admin(msg)
+                Comms.notify_admin(msg)
                 self.reply['warnings'].append('Retrieval of latest PDB data failed (admin notified). ' +
                                               'Falling back onto stored data.')
         chosen_structure = None
@@ -368,110 +529,14 @@ class Venus(VenusBase):
                 log.info(msg)
                 self.reply['warnings'].append(msg)
             else:  # this should not happen in step 3.
+                # causes: PDB given was a fake. How does that happen?
+                # causes the PBD given was too big. e.g. 7MQ8
                 msg = f'Major issue ({error.__class__.__name__}) with model {chosen_structure.code} ({error})'
                 self.reply['warnings'].append(msg)
-                log.critical(msg)
-                notify_admin(msg)
+                log.warning(msg)
+                Comms.notify_admin(msg)
             # ---- repeat
             self.structural_step(retrieve=False)
-
-
-    ### Step 4
-    def ddG_step(self):
-        self.start_timer()
-        log.info(f'Step 4 analysis requested by {User.get_username(self.request)}')
-        # ------- get protein
-        if self.handle not in system_storage:
-            for fun in (self.protein_step, self.mutation_step, self.structural_step):
-                fun()
-                if 'error' in self.reply:
-                    return self.reply
-        protein = system_storage[self.handle]
-        # -------- analyse
-        if hasattr(protein, 'energetics') and protein.energetics is not None:
-            analysis = protein.energetics
-        else:
-            applicable_keys = ( 'scorefxn_name', 'outer_constrained', 'remove_ligands',
-                                'single_chain', 'cycles', 'radius')
-            options = {k: v for k, v in self.get_user_modelling_options().items() if k in applicable_keys}
-            analysis = protein.analyse_FF(**options, spit_process=True)
-        if analysis is None:
-            self.log_if_error('pyrosetta step', 'likely segfault')
-        elif 'error' in analysis:
-            self.log_if_error('pyrosetta step', analysis)
-        else:
-            self.reply['ddG'] = analysis
-            # {ddG: float, scores: Dict[str, float], native:str, mutant:str, rmsd:int}
-        self.stop_timer()
-
-    ### Step 5
-    def ddG_gnomad_step(self):
-        log.info(f'Step 5 analysis requested by {User.get_username(self.request)}')
-        if self.handle not in system_storage:
-            status = self.protein_step()
-            if 'error' in status:
-                return status
-            status = self.mutation_step()
-            if 'error' in status:
-                return status
-        protein = system_storage[self.handle]
-        if hasattr(protein, 'energetics_gnomAD') and protein.energetics_gnomAD is not None:
-            analysis = protein.energetics_gnomAD
-        else:
-            applicable_keys = ('scorefxn_name', 'outer_constrained', 'remove_ligands',
-                               'single_chain', 'cycles', 'radius')
-            options = {k: v for k, v in self.get_user_modelling_options().items() if k in applicable_keys}
-            analysis = protein.analyse_gnomad_FF(**options, spit_process=True)
-        if analysis is None:
-            analysis = dict(error='likely segfault', msg='likely segfault')
-        if 'error' in analysis:  # it is a failure.
-            self.log_if_error('ddG_gnomad_step', analysis)
-            self.reply['status'] = 'error'
-            self.reply['error'] = 'pyrosetta step'
-            self.reply['msg'] = analysis['error']
-        else:
-            self.reply['gnomAD_ddG'] = analysis
-
-    ### STEP EXTRA
-    def extra_step(self, mutation, algorithm):
-        if self.has():
-            self.ddG_step()
-        protein = system_storage[self.handle]
-        log.info(f'Extra analysis ({algorithm}) requested by {User.get_username(self.request)}')
-        self.reply = {**self.reply,
-                      **protein.analyse_other_FF(mutation=mutation, algorithm=algorithm, spit_process=True)}
-        self.log_if_error('extra_step')
-
-    ### STEP EXTRA2
-    def phospho_step(self):
-        if self.has():
-            self.ddG_step()
-        protein = system_storage[self.handle]
-        log.info(f'Phosphorylation requested by {User.get_username(self.request)}')
-        coordinates = protein.phosphorylate_FF(spit_process=True)
-        if isinstance(coordinates, str):
-            self.reply['coordinates'] = coordinates
-        elif isinstance(coordinates, dict):
-            self.reply = {**self.reply, **coordinates}  # it is an error msg!
-        else:
-            self.reply = {**self.reply, 'status': 'error', 'error': 'Unknown', 'msg': 'No coordinates returned'}
-        self.log_if_error('phospho_step')
-
-    ### CHANGE STEP
-    def change_to_file(self, block, name, params: List[str] = ()):
-        # params is either None or a list of topology files
-        if self.has():
-            self.mutation_step()
-        protein = system_storage[self.handle]
-        protein.structural = None
-        protein.energetics = None
-        protein.rosetta_params_filenames = params
-        title, ext = os.path.splitext(name)
-        structure = Structure(title, 'Custom', 0, 9999, title,
-                              type='custom', chain="A", offset=0, coordinates=block)
-        structure.is_satisfactory(protein.mutation.residue_index)
-        self.structural_step(structure=structure)
-        return self.reply
 
     def save_params(self) -> List[str]:
         """
@@ -486,7 +551,9 @@ class Venus(VenusBase):
             params = self.request.params.getall('params')
         else:
             params = []
-        temp_folder = os.path.join('michelanglo_app', 'temp')
+        temp_folder = PyMolTranspiler.temporary_folder
+        # TODO In many places the data is stored in the module!
+        # In module page there is biggest offender.
         if not os.path.exists(temp_folder):
             os.mkdir(temp_folder)
         files = []

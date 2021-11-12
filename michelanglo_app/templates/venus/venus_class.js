@@ -6,6 +6,7 @@
 class Venus {
     constructor() {
         this.prepareDOM();
+        this.timeout = 60 * 5 * 1000 - 100; // Apache is also set to 5 minutes.
         this.uniprot = window.uniprotValue; // name.js code.
         this.taxid = window.taxidValue;
         this.prolink = ' class="prolink" data-target="#viewport" data-toggle="protein" ';
@@ -56,9 +57,9 @@ class Venus {
             'effect': 'Summary of effect',
             'strcha': 'Model based residue details',
             'ddg': 'Forcefield calculations. A negative value is stabilising, and a value of 1-2 kcal/mol is neutral. A hydrogen bond has about 1-2 kcal/mol. For more see documentation.',
+            'neigh': 'Model based, what residues are within 4 &aring;ngstr&ouml;m?',
             'location': 'What domains are nearby linearly &mdash;but not necessarily containing the residue',
             'domdet': 'what is this?',
-            'neigh': 'Model based, what residues are within 4 &aring;ngstr&ouml;m?',
             'gnomad': 'gnomAD mutations with 5 residues distance (structure independent)',
             'motif': 'Motifs predicted using the linear motif patterns from the ELM database. The presence of a linear motif does not mean it is valid, in fact the secondary structure is important: in a helix residues 3 along are facing the same direction, in a sheet alternating residues and in a loop it varies. If a motif is a phosphosite and the residue is not phosphorylated it is likely not legitimate.',
             'link': 'Link to this search (will be redone) for browser or programmatic access',
@@ -73,10 +74,10 @@ class Venus {
         };
 
         this.StatusModeColors = {
-            'working': "alert-warning",
-            'crash': "alert-danger",
-            'halt': "alert-info",
-            'done': "alert-success"
+            'working': "bg-warning",
+            'crash': "bg-danger",
+            'halt': "bg-info",
+            'done': "bg-success"
         };
         this.stepNames = ['Retrieval of protein info',
             'Assessment of mutation without structure',
@@ -116,15 +117,29 @@ class Venus {
             delete window.myData;
             NGL.getStage().removeAllComponents();
         }
-        $('#viewport').children().filter((i, elem) => elem.nodeName !== 'BUTTON').detach()
+        $('#viewport').children().filter((i, elem) => elem.nodeName !== 'BUTTON').detach();
+        NGL.stageIds.viewport = undefined;
         this.updateStructureOption();
         if (this.mutalist !== undefined) this.mutalist.html('');
         $('#results_mutalist').children().detach();
         $('#results').hide();
         $('#venus_calc').removeAttr('disabled');
+        $('#toaster').prepend(`
+                                <div class="toast ml-auto w-100 bg-warning show" 
+                                   role="alert" aria-live="assertive" aria-atomic="true"  id="results_status">
+                                  <div class="toast-header">
+                                    <strong class="mr-auto">Progress</strong>
+                                    <button type="button" class="ml-2 mb-1 close" data-dismiss="toast" aria-label="Close">
+                                      <span aria-hidden="true">&times;</span>
+                                    </button>
+                                  </div>
+                                  <div class="toast-body">
+                                    Error.
+                                  </div>
+                                </div>`);
         $('#results_status').show();
         $('#result_title').html('<i class="far fa-dna fa-spin"></i> Loading');
-        $('results_status').html('ERROR');
+        $('toast-body').html('ERROR');
         $('#fv').html('');
         $('#changeByPage_selector').html('<option name="changeByPage" value="0" selected>Select page first</option>');
         $('#changeByPage_selector').attr('disabled', 'disabled');
@@ -144,14 +159,36 @@ class Venus {
             job_id: this.job_id,
         };
         extras = extras || this.get_user_settings();
+        // chrome autofills usernames and passwords or 9606
+        if ((this.uniprot + '' === '9606')  ||
+            (this.mutation + '' === '9606') ||
+            (this.uniprot.search(/\d/) === -1) ||
+            (this.mutation.search(/\d/) === -1)
+        ) { throw 'chrome autofill prevented.'}
         for (const [key, value] of Object.entries(extras)) {
             // no sanitisation ATM
             data[key] = value;
         }
-        return $.post({url: "venus_analyse", data: data}).fail(ops.addErrorToast).then(reply => {
-            this.timeTaken = reply.time_taken;
-            return reply
-        });
+        return $.post({url: "venus_analyse",
+                       data: data,
+                       timeout: this.timeout
+                       }).fail((error, text) => {
+                             if (text !== 'timeout') {
+                                 ops.addErrorToast(error);
+                                 this.setStatus(`Error: ${error.message}`, 'crash');
+                             } else {
+                                 // polling
+                                 ops.addToast('polling',
+                                     'Slow task',
+                                     'The task is taking longer than expected (possibly large protein?)',
+                                     'bg-warning');
+                                 return this.analyse(step, extras);
+                             }
+
+                         }).then(reply => {
+                                            this.timeTaken = reply.time_taken;
+                                            return reply
+                                        });
     }
 
     //step 0
@@ -193,7 +230,7 @@ class Venus {
             return 0;
         }
         this.setStepStatus(1);
-        return venus.analyse('protein')
+        return this.analyse('protein')
             .fail(xhr => {
                 this.setStepStatus(1, 'crash');
                 $('#venus_calc').removeAttr('disabled');
@@ -310,7 +347,7 @@ class Venus {
             'scorefxn_name': $('#scorefxn_name').val(),
             'custom_filename': upload_pdb.files.length > 0 ? upload_pdb.files[0].name : undefined
         };
-        ['allow_pdb', 'allow_swiss', 'allow_alphafold'].forEach(name => {
+        ['allow_pdb', 'allow_swiss', 'allow_alphafold', 'outer_constrained', 'remove_ligands', 'single_chain'].forEach(name => {
             extras[name] = $('#' + name).prop('checked');
         });
         ['swiss_oligomer_identity_cutoff',
@@ -396,62 +433,34 @@ class Venus {
                     ddgtext += '<b>neutral</b>'
                 }
                 ddgtext += '<br/>';
-
-
-                ddgtext += `<i>Estimated &Delta;&Delta;G (with backbone movement allowed):</i> ${Math.round(this.energetical.ddG)} ${units} `;
+                const ddGLine = this.energetical.ddG < 10 ? Math.round(this.energetical.ddG) : '>10';
+                ddgtext += `<i>Estimated &Delta;&Delta;G (with backbone movement allowed):</i> ${ddGLine} ${units} `;
 
                 let shape = ['silent',
                             ...['smaller', 'bigger','differently shaped', 'equally sized']
                                 .filter(v => venus.mutational.apriori_effect.includes(v))
                             ].pop();
-                let mae;
-                let neutrality;
-                // in full as this is confusing.
                 // MAE from O2567
-                if ((shape === 'differently shaped') && this.structural.buried) {
-                    mae = 2.65;
-                    neutrality = 58;
-                }
-                else if ((shape === 'differently shaped') && ! this.structural.buried) {
-                    mae = 1.53;
-                    neutrality = 64;
-                }
-                else if ((shape === 'smaller') && this.structural.buried) {
-                    mae = 2.75;
-                    neutrality = 71;
-                }
-                else if ((shape === 'smaller') && ! this.structural.buried) {
-                    mae = 1.76;
-                    neutrality = 61;
-                }
-                else if ((shape === 'bigger') && this.structural.buried) {
-                    mae = 3.08;
-                    neutrality = 53;
-                }
-                else if ((shape === 'bigger') && ! this.structural.buried) {
-                    mae = 2.44;
-                    neutrality = 56;
-                }
-                else if ((shape === 'equally sized') && this.structural.buried) {
-                    mae = 2.24;
-                    neutrality = 67;
-                }
-                else if ((shape === 'equally sized') && ! this.structural.buried) {
-                    mae = 1.35;
-                    neutrality = 67;
-                }
-                else {
-                    mae = NaN;
-                    neutrality = NaN;
+                const data = {"buried": {"bigger": {"MAE": 1.27, "MSE": -0.75, "SE": 0.12, "allocation": 0.69}, "differently shaped": {"MAE": 2.23, "MSE": -1.96, "SE": 0.36, "allocation": 0.53}, "equally sized": {"MAE": 1.27, "MSE": -1.27, "SE": 0.29, "allocation": 0.5}, "proline involved": {"MAE": 2.32, "MSE": 1.49, "SE": 0.48, "allocation": 0.67}, "smaller": {"MAE": 2.01, "MSE": -1.69, "SE": 0.09, "allocation": 0.48}}, "surface": {"bigger": {"MAE": 0.81, "MSE": 0.37, "SE": 0.02, "allocation": 0.84}, "differently shaped": {"MAE": 0.58, "MSE": 0.07, "SE": 0.02, "allocation": 0.86}, "equally sized": {"MAE": 0.71, "MSE": -0.14, "SE": 0.06, "allocation": 0.79}, "proline involved": {"MAE": 1.06, "MSE": 0.07, "SE": 0.08, "allocation": 0.79}, "smaller": {"MAE": 0.93, "MSE": -0.6, "SE": 0.02, "allocation": 0.7}}};
+                let cat_mae = 'N/A';
+                let cat_mad = 'N/A';
+                let cat_allocation = 'N/A';
+                let buriedStr = ['surface', 'buried'][this.structural.buried + 0]; // coerce this.structural.buried to int
+                if (shape !== 'silent') {
+                    const subdata = data[buriedStr][shape] ;
+                    cat_mae = subdata["MAE"];
+                    cat_mad = subdata["SE"];
+                    cat_allocation = subdata["allocation"];
                 }
                 ddgtext += '<br/>';
                 ddgtext += `<i>Category of mutation:</i> ${shape}, ${this.structural.buried ? 'buried' : 'surface'}<br/>`;
-                ddgtext += `<i><span title="Median Absolute Error calculated with the O2567 dataset, single chain, no ligand and radius = 12 Å, 1 cycle and ref2015 scorefunction. Median: 50% of cases will be off by more than this." data-toggle="tooltip">
+                ddgtext += `<i><span title="Median Absolute Error calculated with the O2567 dataset, single chain, no ligand and radius = 12 Å, 2 cycle and ref2015 scorefunction. Median: 50% of cases will be off by more than this." data-toggle="tooltip">
                             median error for category:
-                            </span></i> ±${mae} kcal/mol<br/>`;
-                ddgtext += `<i><span title="concordant >2 kcal/mol in O2567 dataset" data-toggle="tooltip">Correct neutrality assignment for category</span></i>: ${neutrality}%<br/>`;
+                            </span></i> ${cat_mae} kcal/mol<br/>`;
+                ddgtext += `<i><span title="concordant >2 kcal/mol in O2567 dataset" data-toggle="tooltip">Correct assignment for category</span></i>: ${cat_allocation * 100}%<br/>`;
                 let bb = this.energetical.scores.mutate - this.energetical.scores.relaxed;
-                ddgtext += `<i>&Delta;&Delta;G (with backbone movement forbidden):</i> ${Math.round(bb)}  ${units} `;
+                const ddGline2 = bb < 10 ? Math.round(bb) : '>10 ';
+                ddgtext += `<i>&Delta;&Delta;G (with backbone movement forbidden):</i> ${ddGline2}  ${units} `;
                 ddgtext += '<br/>';
                 if (this.energetical.scores.mutate + 3 > this.energetical.scores.mutarelax) {
                     ddgtext += `Results in backbone change (RMSD<sub>CA</sub>: ${Math.round(this.energetical.rmsd * 100) / 100})<br/>`;
@@ -461,9 +470,10 @@ class Venus {
                 Object.entries(this.structural.custom_ddG)
                     .forEach(({mutation, data}) => {
                         const color = data > this.energetical.ddG ? 'text-warning' : 'text-secondary';
+                        const ddGLine = data < 10 ? data.toFixed(1) : '>10';
                         ddgtext += `<li><b>${this.makeProlink(mutation.slice(1, -1), mutation)}</b>
                                         <span class="${color}">
-                                        ${data.toFixed(1)} kcal/mol
+                                        ${ddGLine} kcal/mol
                                         </span>
                                         </li>`
                     });
@@ -589,6 +599,7 @@ class Venus {
                 this.setStatus('All tasks complete', 'done');
                 this.energetical_gnomAD = msg.gnomAD_ddG;
                 //refill
+                this.updateNeighbourhood();
                 this.createLocation();
                 this.activate_data_gnomad();
                 this.concludeMutational();
@@ -617,8 +628,23 @@ class Venus {
         };
         this.setStatus(`Running extra job ${mutation}`, 'working');
         return $.post({
-            url: "venus_analyse", data: submissionData
-        }).fail(ops.addErrorToast)
+            url: "venus_analyse",
+            data: submissionData,
+            timeout: this.timeout,
+        }).fail((error, text) => {
+                             if (text !== 'timeout') {
+                                 ops.addErrorToast(error);
+                                 this.setStatus(`Error: ${error.message}`, 'crash');
+                             } else {
+                                 // polling
+                                 setTimeout(() => this.analyse_target(mutation, algorithm), 30000);
+                                 ops.addToast('polling',
+                                     'Slow task',
+                                     'The task is taking longer than expected (possibly large protein?)',
+                                     'bg-warning');
+                             }
+
+                         })
             .done(msg => {
                 if (msg.error) {
                     this.setStatus('Failure at extra job', 'crash');
@@ -704,47 +730,35 @@ class Venus {
         return this.analyse('customfile', extras);
     }
 
-    fetchMike(uuid, params) {
-        // '#createMike' does not provide a uuid.
-        $.post({
-            url: "save_pdb", data: {
-                uuid: uuid,
-                index: -1
-            }
-        }).fail(ops.addErrorToast)
-            .done(msg => {
-                if (msg.number === undefined) {
-                    ops.addToast('mike_error',
-                        'Page info retrieval error',
-                        msg.status,
-                        'bg-warning')
-                } else {
-                    this.addMikeOptions(msg.definitions)
-                }
-
-            });
-    }
-
-    addMikeOptions(definitions) {
-        changeByPage_selector.removeAttribute("disabled");
-        //$('#changeByPage_selector').html('');
-        const namer = v => v.name === undefined ? v.value : v.name;
-        changeByPage_selector.innerHTML = definitions.map((v, i) => `<option name="changeByPage" value="${namer(v)}">${i + 1}. ${namer(v)} (${v.type})</option>`).join('\n');
-    }
-
     //progress bar.
     setStatus(label, mode) { //working, crash, done
         mode = mode || 'working';
-        const s = $('#results_status');
-        if (this.StatusModeColors[mode] === undefined) {
-            s.html(label);
-            return;
-        }
-        s.html(`<div class="alert ${this.StatusModeColors[mode]} w-100">
-                <i class="${this.StatusModeIcons[mode]}"></i> 
-                ${label}</div>`);
-        s.find('[data-toggle="tooltip"]').tooltip();
-        if (mode === 'done') setTimeout(() => s.hide(), this.animation_speed);
+        $('#results_status').detach();
+        const color = this.StatusModeColors[mode] || '';
+        $('#toaster').prepend(`
+                                <div class="toast ml-auto w-100 ${color} show" 
+                                      style="z-index:9000; pointer-events: auto"
+                                     role="alert" aria-live="assertive" aria-atomic="true" 
+                                     data-autohide="false" 
+                                     id="results_status">
+                                  <div class="toast-header">
+                                    <strong class="mr-auto">Progress</strong>
+                                    <button type="button" class="ml-2 mb-1 close" data-dismiss="toast" aria-label="Close">
+                                      <span aria-hidden="true">&times;</span>
+                                    </button>
+                                  </div>
+                                  <div class="toast-body">
+                                    ${label}
+                                    <small id="results_status_caption"></small>
+                                  </div>
+                                </div>`);
+        $('#results_status').mouseover(event => {
+                                            if ($(event.target).data('toggle')) {
+                                                $('#results_status_caption').html(`<br/>(${event.target.title})`);
+                                            }
+                                        })
+            .toast('show');
+        if (mode === 'done') setTimeout(() => $('#results_status').hide(), this.animation_speed * 2);
     }
 
 
@@ -862,6 +876,7 @@ class Venus {
             let [description, x] = m.slice(0, 2);
             x = parseInt(x);
             if (x > this.protein.sequence.length) return; // wrong isoform!
+            if (x <= 1) return;
             coverage[x - 1].color = 'gray';
             coverage[x - 1].tooltip += ' ' + description.replace('description=', '');
         });
@@ -1123,8 +1138,8 @@ class Venus {
     }
 
     createLinks() {
-        let linktext = `<i>this search (browser)</i>: <code>https://venus.sgc.ox.ac.uk/?uniprot=${this.uniprot}&species=${this.taxid}&mutation=${this.mutation}</code><br/>`;
-        linktext += `<i>this search (API)</i>: <code>https://venus.sgc.ox.ac.uk/venus_analyse?uniprot=${this.uniprot}&species=${this.taxid}&mutation=${this.mutation}</code>`;
+        let linktext = `<i>this search (browser)</i>: <code>${window.location.protocol}//${window.location.host}${window.location.pathname}?uniprot=${this.uniprot}&species=${this.taxid}&mutation=${this.mutation}</code><br/>`;
+        linktext += `<i>this search (API)</i>: <code>${window.location.protocol}//${window.location.host}/venus_analyse?uniprot=${this.uniprot}&species=${this.taxid}&mutation=${this.mutation}</code>`;
         this.createEntry('link', 'Links', linktext);
     }
 
@@ -1252,14 +1267,13 @@ the gnomAD variants may include pathogenic variants (hence the suggestion to che
     }
 
     get_gnomAD_details(mutation) {
-        // mutation is str "A23Q" returns { id: "gnomAD_114_114_rs1163968308", x: 114, y: 114, impact: "MODERATE", description: "V114L (rs1163968308)", homozygous: 0 }
-        return this.protein.gnomAD.filter(v => v.description.includes(mutation))[0];
         //Python Variant object (gnomad) wass saved as string --> corrected.
-        // .replace(/Variant\((.*)\)/, '$1')
-        // .replace(/\'/g, '')
-        // .split(',')
-        // .map(v => v.split('='))
-        // .map(([k, v]) => [k.trim(), isNaN(parseInt(v)) ? v : parseInt(v)])
+        // mutation is str "A23Q" returns { id: "gnomAD_114_114_rs1163968308", x: 114, y: 114, impact: "MODERATE", description: "V114L (rs1163968308)", homozygous: 0 }
+        const detail = this.protein.gnomAD.filter(v => v.description.includes(mutation))[0];
+        if (this.energetical_gnomAD !== undefined && this.energetical_gnomAD[mutation] !== undefined) {
+            detail.ddG = this.energetical_gnomAD[mutation];
+        }
+        return detail
     }
 
     loadStructure() {
@@ -1363,26 +1377,26 @@ the gnomAD variants may include pathogenic variants (hence the suggestion to che
             strloctext += ` (<span class='prolink' data-target="#viewport" data-toggle="protein" data-selection="*"
                                 data-focus="domain" data-color="bfactor">show confidence in  pLDDT</span>)`;
             strloctext += '</p>';
-            let plddt_color = 'error';
+            let plddt_color = 'bg-danger';
             let plddt_word = 'error';
             if (this.structural.bfactor > 90) {
-                plddt_color = 'success';
+                plddt_color = 'bg-success';
                 plddt_word = 'very highly confident';
             }
             else if (this.structural.bfactor > 70) {
-                plddt_color = 'info';
+                plddt_color = 'bg-info';
                 plddt_word = 'confident';
             }
             else if (this.structural.bfactor > 50) {
-                plddt_color = 'warning';
+                plddt_color = 'bg-warning'; //text-white and bg-warning looks fine.
                 plddt_word = 'low';
             }
             else {
-                plddt_color = 'danger';
+                plddt_color = 'bg-danger';
                 plddt_word = 'very low';
             }
 
-            strloctext += `<p class="bg-${plddt_color}" data-toggle="tooltip" 
+            strloctext += `<p class="${plddt_color} text-white p-1" data-toggle="tooltip" 
                             title="A pLDDT over 70% is confident. Below 50% is poor.">
                                 <i>pLDDT</i>: ${this.structural.bfactor.toFixed(1)}% (${plddt_word})</p>`;
         } else {
@@ -1443,18 +1457,55 @@ the gnomAD variants may include pathogenic variants (hence the suggestion to che
         this.createEntry('strcha', 'Structural character', strloctext);
         // unsure why these do not get picked up.
         $('#chainDescr [href="#viewport"]').protein();
+        this.updateNeighbourhood();
+    }
+
+    updateNeighbourhood() {
+        // # =========== Neighbours ===========
+        // ## The all selector
         const allSele = this.structural.neighbours.map(v => v.resi + ':A').join(' or ');
         let omni;
         if (this.structural.has_conservation) {
             omni = `<span ${this.prolink} data-color="bfactor" data-focus="residue" data-selection="${allSele}">
-                    (all, coloured by conservation)</span>`;
+                    all, coloured by conservation</span>`;
         } else {
             omni = `<span ${this.prolink} data-color="turquoise" data-focus="residue" data-selection="${allSele}">
-                    (all)</span>`;
+                    all</span>`;
         }
-        //this.makeProlink(allSele, '(all)');
 
-        let strtext = `<p>Structural neighbourhood ${omni}.
+        // ## the ptm selector
+        const ptmSele = this.structural.neighbours
+                            .filter(v => v.ptms.length)
+                            .map(v => v.resi + ':A').join(' or ');
+        const ptms = `<span ${this.prolink} data-color="turquoise"  data-focus="residue" data-selection="${ptmSele}">
+                    PTM sites</span>`;
+
+        // ## the gnomad selector
+        const gnomadSele = this.structural.neighbours
+                            .filter(v => Object.keys(v.gnomads).length)
+                            .map(v => v.resi + ':A').join(' or ');
+        const gnomads = `<span ${this.prolink} data-color="turquoise"  data-focus="residue" data-selection="${gnomadSele}">
+                    gnomAD</span>`;
+        let badGnomads = '';
+        if (this.energetical_gnomAD !== undefined) {
+            // there should always be an object gnomads, so the ternary is overkill
+            const cacognomadSele = this.structural.neighbours
+                            .filter(v => Object.keys(v.gnomads)
+                                               .map(mutation => this.get_gnomAD_details(mutation).ddG >= 2)
+                                               .some(v=>v)
+                            )
+                            .map(v => v.resi + ':A').join(' or ');
+            badGnomads = `<span ${this.prolink} data-color="salmon"  data-focus="residue" data-selection="${cacognomadSele}">
+                    destabilising gnomAD</span>`;
+        }
+        let ddGNeighs = '';
+        if (this.energetical !== undefined) {
+            const energySele = this.energetical.neighbours.map(v => v.trim().replace(' ',':')).join(' or ');
+            ddGNeighs = `<span ${this.prolink} data-color="teal"  data-focus="residue" data-selection="${energySele}">
+                    minimisation</span>`;
+        }
+
+        let strtext = `<p>Structural neighbourhood (${omni}; ${ptms}; ${gnomads}; ${badGnomads}; ${ddGNeighs}).
                         (see ${this.makeExt('https://gnomad.broadinstitute.org/', 'gnomAD')} and
                         ${this.makeExt('https://www.phosphosite.org', 'PhosphoSitePlus')} 
                         for extra information)</p>`;
@@ -1466,32 +1517,72 @@ the gnomAD variants may include pathogenic variants (hence the suggestion to che
     }
 
     makeNeighbourLI(data) {
-        const label = data.resn + data.resi;
+        const label = data.resn + data.resi; //NB. resi is a string because PyMOL and it may be an insertion code (!?)
         const selector = data.resi + ":" + data.chain;
         const prolink = this.makeProlink(selector, label);
-        const distance = `&mdash; ${data.distance.toFixed(1)} &Aring; away`;
-        let detail = '';
-        if (data.detail.includes('gnomAD:')) {
-            const mutation = data.detail.replace('gnomAD:', '').split(' ')[0];
-            const deets = this.get_gnomAD_details(mutation);
-            if (deets !== undefined) {
-                const homozygous = deets.homozygous;
-                const icon = homozygous === 0 ? 'far fa-adjust' : 'fas fa-circle';
-                detail = `&mdash; <span style='cursor: pointer;'
-                                class='underlined venus-plain-mike'
-                                data-gnomad='${JSON.stringify([mutation])}'
-                                >${data.detail}
-                                </span>
-                                <i class="far ${icon}" data-toggle="tooltip" title="${homozygous} homozygous cases"></i>`;
+        const distance = ` &mdash; ${data.distance.toFixed(1)} &Aring; away`;
+        let detail = ''; // mdash sepearated. Mostly.
+        // ----------------------------- Interface
+        if (data.other_chain) {
+            const chainDeets = this.structural.chain_definitions.filter(v => v.chain = 'A');
+            if (chainDeets) {
+                detail = ` from interacting protein (${data.chain}: ${chainDeets[0].name})`;
             } else {
-                detail = '&mdash; ' + data.detail;
+                 console.log('Warning: no name in chain definitions??');
+                 detail = ` from interacting protein (${data.chain})`;
             }
-        } else if (data.detail !== undefined && data.detail.length) {
-            detail = '&mdash; ' + data.detail;
         }
+        // ----------------------------- Fill PTMs stuff.
+        data.ptms.map(ptm => {
+                  detail += ' &mdash; ' + ptm;
+              });
+        // ----------------------------- Fill gnomAD stuff.
+        Object.keys(data.gnomads)
+              .map(mutation => {
+                         const properties = data.gnomads[mutation];
+                         const datagnomad = `data-gnomad='${JSON.stringify([mutation])}'`;
+                         const deets = this.get_gnomAD_details(mutation);
+                         const homozygous = deets.homozygous;
+                         const icon = homozygous === 0 ? 'far fa-adjust' : 'fas fa-circle';
+                         const iconed = `<i class="far ${icon}" ${datagnomad} data-toggle="tooltip" title="${homozygous} homozygous cases"></i>`;
+
+                         if (! deets) {
+                             //glitched? Generally nonsense mutations?
+                             detail += ' &mdash; ' + data.detail;
+                         }
+                         else if (deets.type !== 'missense') {
+                                // Not a missense.
+                                detail += ` &mdash;
+                                      ${properties.full}
+                                      ${iconed}`;
+                         }
+                         else if (deets.ddG === undefined) {
+                                // Missense w/o ddG
+                                detail += ` &mdash;
+                                      <span style='cursor: pointer;'
+                                            class='underlined venus-plain-mike'
+                                            ${datagnomad}>
+                                      ${properties.full}
+                                      </span>
+                                      ${iconed}`;
+                         }
+                         else {
+                             // Missense w/ ddG
+                             const kcalColor = deets.ddG < 2 ? 'text-muted' : 'text-danger';
+                             const kcal = `<span class='${kcalColor}' ${datagnomad}>${deets.ddG.toPrecision(2)} kcal/mol</span>`;
+                             detail += ` &mdash;
+                                      <span style='cursor: pointer;'
+                                            class='underlined venus-plain-mike'
+                                            ${datagnomad}>
+                                      ${properties.full} ${kcal}
+                                      </span>
+                                      ${iconed}`;
+                         }
+              });
+        // ----------------------------- conservation
         let conservation = '';
         if (!!this.structural.has_conservation) {
-            conservation = '&mdash; no conservation data';
+            conservation = ' &mdash; no conservation data';
             if (data.conscore !== undefined) {
                 conservation = `&mdash; <span  title='Consurf normalised homology score: positive = less conserved. negative = conserved' data-toggle='tooltip'>
                                 conservation=${data.conscore.toFixed(1)}
@@ -1502,7 +1593,15 @@ the gnomAD variants may include pathogenic variants (hence the suggestion to che
                                 `;
             }
         }
-        return `<li>${prolink} ${distance} ${detail} ${conservation}</li>`;
+        // ----------------------------- Output
+        if (this.mutational.residue_index.toString() === data.resi.toString()) {
+            // This neighbour is the mutated residue itself.
+            return `<li><b>${prolink}</b> (target) ${detail} ${conservation}</li>`;
+        } else {
+            // This is a normal neighbour
+            return `<li>${prolink} ${distance} ${detail} ${conservation}</li>`;
+        }
+
     }
 
     updateStructureOption() {
@@ -1609,8 +1708,9 @@ the gnomAD variants may include pathogenic variants (hence the suggestion to che
         };
         // other end at page_creation.py
         return $.post({
-            url: "venus_create", data: {'proteindata': JSON.stringify(data)}
-            , dataType: 'json'
+            url: "venus_create", data: {'proteindata': JSON.stringify(data)},
+            dataType: 'json',
+            timeout: this.timeout
         })
             .done(function (msg) {
                 ops.addToast('jobcompletion', 'Conversion complete', 'The data has been converted successfully.', 'bg-success');
@@ -1763,7 +1863,8 @@ the gnomAD variants may include pathogenic variants (hence the suggestion to che
             return null;
         } else if (this.energetical.ddG > 10) {
             return `the mutation is extremely ${destabilising} and the calculations are likely to be inaccurate
-                    (∆∆G: ~${venus.energetical.ddG.toFixed(0)} kcal/mol)`
+            (∆∆G: <span class="text-decoration-underline" data-toggle="tooltip" data-title="~${venus.energetical.ddG.toFixed(0)} kcal/mol">&gt; 10</span>
+             kcal/mol)`
         } else if (this.energetical.ddG > 5) {
             return `the mutation is strongly ${destabilising} (∆∆G: ${venus.energetical.ddG.toFixed(1)} kcal/mol)`
         } else if (this.energetical.ddG > 2) {

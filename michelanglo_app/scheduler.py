@@ -5,7 +5,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.sql.expression import and_
 import transaction
 from apscheduler.schedulers.background import BackgroundScheduler
-from .views.common_methods import notify_admin, email
+from .views.common_methods import Comms
 from michelanglo_transpiler import GlobalPyMOL
 from mako.template import Template
 
@@ -20,11 +20,13 @@ log = logging.getLogger('apscheduler')
 # ==============================  MAIN  ================================================================================
 
 def includeme(config):
-    # scheduler.days_delete_unedited = 30
-    # scheduler.days_delete_untouched = 365
     settings = config.get_settings()
-    scheduler = BackgroundScheduler()
+    Entasker.sql_url = settings['sqlalchemy.url']
+    Entasker.user_data_folder = settings['michelanglo.user_data_folder']
+    #Entasker.port = '8088'  # hardcoded because I am not sure I can find out the port...
+    Entasker.puppeteer_chrome = settings["puppeteer.executablepath"]
 
+    scheduler = BackgroundScheduler()
     # =============== PERIODIC TASKS ===============
     scheduler.add_job(Entasker.kill_task, 'interval', days=1, args=[int(settings['scheduler.days_delete_unedited']),
                                                                     int(settings['scheduler.days_delete_untouched'])])
@@ -42,9 +44,15 @@ def includeme(config):
 # ==============================   TASKS  ==============================================================================
 
 class Entasker:
+
+    sql_url = ''  # filled by scheduler.includeme builder function
+    user_data_folder = ''
+    port = '8088'
+    puppeteer_chrome = ''
+
     def __init__(self):
         # not request bound.
-        engine = engine_from_config({'sqlalchemy.url': os.environ['SQL_URL'],
+        engine = engine_from_config({'sqlalchemy.url': self.sql_url,
                                      'sqlalchemy.echo': 'False'},
                                     prefix='sqlalchemy.')
         Session = sessionmaker(bind=engine)
@@ -88,7 +96,7 @@ class Entasker:
                 elif user.email is None or '@' not in user.email:
                     # do not contact
                     msg = f'{user.name} (no email) could not notified of {len(delitura)} pages expiring.'
-                    notify_admin(msg)
+                    Comms.notify_admin(msg)
                     log.info(msg)
                 else:
                     docs = 'https://michelanglo.sgc.ox.ac.uk/docs/users'
@@ -107,29 +115,29 @@ class Entasker:
                            'go to your personal gallery via the menu button and look for a clock icon at the bottom of some cards.)\n' + \
                            f'Thank you,\nMatteo (Michelanglo admin)\n'
                     try:
-                        email(text, user.email, 'Michelanglo page expiry notice') #
+                        Comms.email(text, user.email, 'Michelanglo page expiry notice') #
                         msg = f'{user.name} ({user.email}) was notified of {len(delitura)} pages expiring.'
-                        notify_admin(msg)
+                        Comms.notify_admin(msg)
                         log.info(msg)
                     except Exception as error:
                         msg = f'Failed at emailing {user.name} ({user.email}) about {len(delitura)} pages expiring ' + \
                               f'because of {type(error).__name__} {str(error)}.'
-                        notify_admin(msg)
+                        Comms.notify_admin(msg)
                         log.warning(msg)
 
     @classmethod
     def kill_task(cls, days_delete_unedited: int=30, days_delete_untouched: int=365):
         self = cls()
         with transaction.manager:
-            n = 0
+            n, m = 0, 0
             for page in self.session.query(Page).filter(
                     and_(Page.existant == True,
                          Page.edited == False)):  # deletable.
-
                 if page.age < int(days_delete_unedited):
                     continue  # too young
                 else:  # delete.
-                    log.info(f'Deleting unedited page {page.identifier} by {page}')
+                    # to find owner one would need to look in `user.owned.pages`
+                    log.info(f'Deleting unedited page {page.identifier} entitled {page.title}')
                     n += 1
                     page.delete()
             for page in self.session.query(Page).filter(and_(Page.existant == True,
@@ -138,20 +146,20 @@ class Entasker:
                 if page.age < int(days_delete_untouched):
                     continue  # too young
                 elif self.session.query(Doi).filter(Doi.long == page.identifier).first() is not None:
-                    notify_admin(f'{page.identifier} is untouched but has a doi.')
+                    Comms.notify_admin(f'{page.identifier} is untouched but has a doi.')
                     continue  # doi
                 else:
                     log.info(f'Deleting abandoned page {page.identifier} ({page.timestamp})')
                     try:
                         page.delete()
-                    except FileNotFoundError:
+                        m += 1
+                    except FileNotFoundError: # this is impossible as now `delete` check if valid.
                         # file has been deleted manually!?
                         # this is a pretty major incident.
                         page.existant = False
                         log.warning(f'{page.identifier} does not exist.')
-                        notify_admin(f'{page.identifier} does not exist.')
-                    n += 1
-            notify_admin(f'Deleted {n} pages in cleanup.')
+                        Comms.notify_admin(f'{page.identifier} does not exist.')
+            Comms.notify_admin(f'Deleted {n} unedited and {m} edited pages in cleanup.')
         self.session.commit()
 
     @classmethod
@@ -166,13 +174,19 @@ class Entasker:
                 log.info(f'Monitoring {page}.')
                 state = []
                 try:
-                    if os.system(f'node michelanglo_app/monitor.js {page.identifier} tmp_'):
-                        raise ValueError(f'monitor crashed: node michelanglo_app/monitor.js {page.identifier} tmp_')
+                    # under most conditions the following should be `michelanglo_app`
+                    michelanglo_app_folder = os.path.split(__file__)[0]
+                    cmd = ' '.join([f'USER_DATA={cls.user_data_folder}',
+                                    f'PORT={cls.port}',
+                                    f'PUPPETEER_CHROME={cls.puppeteer_chrome}',
+                                    f'node {michelanglo_app_folder}/monitor.js {page.identifier} tmp_'])
+                    if os.system(cmd):  # exit status != 0
+                        raise ValueError(f'monitor crashed: {cmd}')
                     details = json.load(
-                        open(os.path.join('michelanglo_app', 'user-data-monitor', page.identifier + '.json')))
+                        open(os.path.join(cls.user_data_folder, 'monitor', page.identifier + '.json')))
                     for i in range(len(details)):
-                        ref = os.path.join('michelanglo_app', 'user-data-monitor', f'{page.identifier}-{i}.png')
-                        new = os.path.join('michelanglo_app', 'user-data-monitor', f'tmp_{page.identifier}-{i}.png')
+                        ref = os.path.join(cls.user_data_folder, 'monitor', f'{page.identifier}-{i}.png')
+                        new = os.path.join(cls.user_data_folder, 'monitor', f'tmp_{page.identifier}-{i}.png')
                         assert os.path.exists(ref), 'Reference image does not exist'
                         assert os.path.exists(new), 'Generated image does not exist'
                         ref_img = imageio.imread(ref).flatten()
@@ -184,15 +198,15 @@ class Entasker:
                         else:
                             state.append(False)
                             msg = f'Page monitoring unsuccessful for {page.identifier} image {i}'
-                            notify_admin(msg)
+                            Comms.notify_admin(msg)
                 except Exception as err:
                     msg = f'Page monitoring unsuccessful for {page.identifier} {err}'
                     log.warning(msg)
-                    notify_admin(msg)
+                    Comms.notify_admin(msg)
                 else:
                     log.info(f'Page monitoring successful for {page.identifier}')
                 pickle.dump(state,
-                            open(os.path.join('michelanglo_app', 'user-data-monitor', f'verdict_{page.identifier}.p'),
+                            open(os.path.join(cls.user_data_folder, 'monitor', f'verdict_{page.identifier}.p'),
                                  'wb'))
 
     @classmethod

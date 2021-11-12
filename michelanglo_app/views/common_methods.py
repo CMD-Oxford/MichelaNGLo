@@ -5,6 +5,8 @@ from michelanglo_protein import Structure, global_settings, is_alphafold_taxon
 from . import valid_extensions
 from .uniprot_data import uniprot2name
 from pyramid.request import Request
+import smtplib
+from email.mime.text import MIMEText
 
 log = logging.getLogger(__name__)
 from typing import Union
@@ -24,54 +26,57 @@ def is_js_true(value: str):
         return True
 
 
-def get_uuid(request):
+def get_uuid(request: Request):
     identifier = str(uuid.uuid4())
     if identifier in [p.identifier for p in request.dbsession.query(Page)]:
         log.error('UUID collision!!!')
         return get_uuid(request)  # one in a ten-quintillion!
     return identifier
 
+class Comms:
+    slack_webhook = None  # filled by data_folder_setup.setup_comms
+    server_email = None
+    admin_email = None
 
-def notify_admin(msg):
-    """
-    Send message to a slack webhook
-    :param msg:
-    :return:
-    """
-    if 'SLACK_WEBHOOK' not in os.environ:
-        log.critical(f'SLACK_WEBHOOK is absent! Cannot send message {msg}')
-        return
-    # sanitise.
-    msg = unicodedata.normalize('NFKD', msg).encode('ascii', 'ignore').decode('ascii')
-    msg = re.sub('[^\w\s\-.,;?!@#()\[\]]', '', msg)
+    @classmethod
+    def notify_admin(cls, msg):
+        """
+        Send message to a slack webhook
+        :param msg:
+        :return:
+        """
+        if not cls.slack_webhook:
+            log.critical(f'SLACK_WEBHOOK is absent!')
+            log.warning(f'Cannot send message {msg}')
+            return
+        # sanitise.
+        msg = unicodedata.normalize('NFKD', msg).encode('ascii', 'ignore').decode('ascii')
+        msg = re.sub('[^\w\s\-.,;?!@#()\[\]]', '', msg)
 
-    r = requests.post(url=os.environ['SLACK_WEBHOOK'],
-                      headers={'Content-type': 'application/json'},
-                      data=f"{{'text': '{msg}'}}")
-    if r.status_code == 200 and r.content == b'ok':
-        return True
-    else:
-        log.error(f'{msg} failed to send (code: {r.status_code}, {r.content}).')
-        return False
+        r = requests.post(url=cls.slack_webhook.strip(),
+                          headers={'Content-type': 'application/json'},
+                          data=f"{{'text': '{msg}'}}")
+        if r.status_code == 200 and r.content == b'ok':
+            return True
+        else:
+            log.error(f'{msg} failed to send (code: {r.status_code}, {r.content}).')
+            return False
 
-
-import smtplib
-from email.mime.text import MIMEText
-
-
-def email(text, recipient, subject='[Michelanglo] Notification'):
-    if "SERVER_EMAIL" not in os.environ:
-        log.warning('There is not mailing system configured.')
-    else:
-        smtp = smtplib.SMTP()
-        smtp.connect('localhost')
-        msg = MIMEText(text)
-        msg['Subject'] = subject
-        msg['From'] = os.environ["SERVER_EMAIL"]
-        msg['To'] = recipient
-        msg.add_header('reply-to', os.environ["ADMIN_EMAIL"])
-        smtp.send_message(msg)
-        smtp.quit()
+    @classmethod
+    def email(cls, text, recipient, subject='[Michelanglo] Notification'):
+        if not cls.server_email:
+            log.warning('There is not mailing system configured.')
+        else:
+            smtp = smtplib.SMTP()
+            smtp.connect('localhost')
+            msg = MIMEText(text)
+            msg['Subject'] = subject
+            msg['From'] = cls.server_email
+            msg['To'] = recipient
+            if cls.admin_email:
+                msg.add_header('reply-to', cls.admin_email)
+            smtp.send_message(msg)
+            smtp.quit()
 
 
 def is_malformed(request, *args) -> Union[None, str]:
@@ -180,7 +185,7 @@ def get_references(code):
         code = code.replace('based upon', '').strip().split('.')[0]
         if len(code) == 0:
             return ''
-        elif 'alphafold' in code:
+        elif 'alphafold' in code or 'AF-' in code:
             return 'Model derived from EBI AlphaFold2 ' + \
                    '<a href="https://www.nature.com/articles/s41586-021-03819-2" target="_blank">' + \
                    'Jumper, J., Evans, R., Pritzel, A. et al. Highly accurate protein structure prediction with AlphaFold. Nature (2021).' + \
@@ -190,7 +195,14 @@ def get_references(code):
                    'Waterhouse, A., Bertoni, M., Bienert, S., Studer, G., Tauriello, G., Gumienny, R., Heer, F.T., de Beer, T.A.P., Rempfer, C., Bordoli, L., Lepore, R., Schwede, T.' + \
                    ' (2018) SWISS-MODEL: homology modelling of protein structures and complexes. <i>Nucleic Acids Res.</i> <b>46(W1)</b>, W296-W303.</a>'
         else:
-            reply = requests.get(f'https://www.ebi.ac.uk/pdbe/api/pdb/entry/publications/{code}').json()
+            try:
+                raw_reply = requests.get(f'https://www.ebi.ac.uk/pdbe/api/pdb/entry/publications/{code}')
+                assert raw_reply.status_code == 200, f'Request gave a {raw_reply.status_code} code'
+                reply = raw_reply.json()
+            except Exception as err:
+                msg = f'{err.__class__.__name__}: {err} for {code} in `get_references`'
+                log.warning(msg)
+                reply = {}
             if reply:
                 citations = []
                 for ref in reply[code.lower()]:
@@ -212,16 +224,21 @@ def get_references(code):
             else:
                 return ''
     except Exception as error:
-        msg = f'get_reference {error.__class__.__name__} - {error} for "{code}"'
-        log.error(msg)
-        notify_admin(msg)
+        msg = f'Severe/impossible... get_reference {error.__class__.__name__} - {error} for "{code}"'
+        log.warning(msg)
+        Comms.notify_admin(msg)
+        return ''
 
 
 def save_file(request, extension, field='file'):
     """
     Saves the file without doing anything to it.
     """
-    filename = os.path.join('michelanglo_app', 'temp', '{0}.{1}'.format(get_uuid(request), extension))
+
+    filename = os.path.join(request.registry.settings['michelanglo.user_data_folder'],
+                            'temp',
+                            '{0}.{1}'.format(get_uuid(request), extension)
+                            )
     with open(filename, 'wb') as output_file:
         if isinstance(request.params[field], str):  ###API user made a mess.
             log.warning(f'user uploaded a str not a file!')

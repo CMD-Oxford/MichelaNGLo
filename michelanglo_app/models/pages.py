@@ -26,7 +26,6 @@ from sqlalchemy import (
 from .meta import Base
 
 
-
 class Page(Base):
     """ The SQLAlchemy declarative model class for a Page object.
         This is just to speed up things. The actual data is in user-data as a pickle!
@@ -47,7 +46,7 @@ class Page(Base):
     id = Column(Integer, primary_key=True)
     identifier = Column(Text, nullable=False, unique=True)
     title = Column(Text, default='')
-    existant = Column(Boolean, default=True)
+    existant = Column(Boolean, default=True)  # existent is the correct spelling. exists is a key word in SQLite
     edited = Column(Boolean, default=False)
     encrypted = Column(Boolean, default=False)
     timestamp = Column(DateTime, nullable=False) #, default=datetime.datetime.utcnow)
@@ -55,9 +54,11 @@ class Page(Base):
     privacy = Column(Text, default='private') #private | public | published | sgc | pinned
     settings = None  #watchout this ought to be a dict, but dict is mutable.
     key = None
-    unencrypted_path = property(lambda self: os.path.join('michelanglo_app', 'user-data', self.identifier + '.p'))
-    encrypted_path = property(lambda self: os.path.join('michelanglo_app', 'user-data', self.identifier + '.ep'))
-    thumb_path = property(lambda self: os.path.join('michelanglo_app', 'user-data-thumb', self.identifier + '.png'))
+    # paths changed from michelanglo_app/user-data and michelanglo_app/user-data-thumb
+    data_folder = 'user_data'  # class attribute changed in .model.__init__ config.
+    unencrypted_path = property(lambda self: os.path.join(self.data_folder, 'pages', self.identifier + '.p'))
+    encrypted_path = property(lambda self: os.path.join(self.data_folder, 'pages', self.identifier + '.ep'))
+    thumb_path = property(lambda self: os.path.join(self.data_folder, 'thumb', self.identifier + '.png'))
     path = property(lambda self: self.encrypted_path if self.encrypted is True else self.unencrypted_path)
 
     def __init__(self, identifier, key=None):
@@ -189,14 +190,12 @@ class Page(Base):
         return data[:-padding]  # remove the padding
 
     def delete(self):
-        if self.existant:
-            if os.path.exists(self.path):
-                os.remove(self.path)
-            else:
-                pass
-            self.existant = False
+        if os.path.exists(self.path):
+            os.remove(self.path)
         else:
-            print('DEBUG.... DELETION OF A NON EXISTANT PAGE IS IMPOSSIBLE')
+            pass
+        self.existant = False
+        # print('DEBUG.... DELETION OF A NON EXISTANT PAGE IS IMPOSSIBLE')
         return self
 
     def is_public(self):

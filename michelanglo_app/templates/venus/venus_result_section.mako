@@ -4,7 +4,7 @@
     %if mutation_mode == 'main':
     <div class="row">
         <!-- Main menu -->
-        <div class="offset-3 col-6 mb-4 py-4">
+        <div class="offset-3 col-6 mb-4 py-4" id="titleCard">
             <div class="card shadow-sm bg-light">
                 <div class="card-body  text-center">
                     <div class="btn-group" role="group" aria-label="Basic example">
@@ -18,7 +18,6 @@
                     </div>
                     <hr>
                     <h3 id="result_title"></h3>
-                    <p id="results_status" class="px-5">Error.</p>
                 </div>
             </div>
         </div>
@@ -214,10 +213,32 @@
 
                         ######################
                             <h3>Structure</h3>
-                        <ul id="structureOption"><!--filled dynamically by venus.updateStructure()--></ul>
+                        <div class="row">
+                            <div class="col-12 col-lg-8">
+                                <ul id="structureOption"><!--filled dynamically by venus.updateStructure()--></ul>
+                            </div>
+                            <div class="col-12 col-lg-8">
+                                <div class="btn-group" role="group" aria-label="extras">
+                                  <button type="button" class="btn btn-outline-info" id="save"><i class="far fa-camera"></i> Save image</button>
+                                </div>
+                            </div>
+                        </div>
                     </div>
                     %elif mutation_mode == 'multi':
-                        <button type="button" class="btn btn-outline-info w-100" data-toggle="modal" data-target="#createMikeModal"><i class="far fa-pencil-paintbrush"></i> Create Michela<span style="font-variant: small-caps;">ngl</span>o page</button>
+                        <div class="btn-group" role="group" aria-label="extras">
+                    <button type="button" class="btn btn-outline-info w-100" data-toggle="modal" data-target="#createMikeModal"><i class="far fa-pencil-paintbrush"></i> Create Michela<span style="font-variant: small-caps;">ngl</span>o page</button>
+                    <button type="button" class="btn btn-outline-info" id="save"><i class="far fa-camera"></i> Save image</button>
+                        </div>
+                    %endif
+                    % if mutation_mode == 'main' and user and user.role == 'admin':
+                        <div>
+                            <h4>Debug (Admin only)</h4>
+                            <div class="btn-group" role="group" aria-label="debug">
+                              <button type="button" class="btn btn-secondary" onclick="$('.toast').removeClass('fade').removeClass('hide').addClass('show')">Show all toasts</button>
+                              <button type="button" class="btn btn-secondary" onclick="$($('.toast').get(0)).detach()">Delete toast</button>
+                              <button type="button" class="btn btn-secondary" onclick="NGL.setDebug(true)">Debug NGL</button>
+                            </div>
+                        </div>
                     %endif
                 </div>
             </div>

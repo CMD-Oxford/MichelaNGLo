@@ -12,10 +12,10 @@
 // species and uniprot searches are done by name.js
 // Also URL query is resolved by urlQueriest in name.js
 
-$(window).scroll(() => {
-    const card = $('#vieport_side');
+moveScrolledViewport = () => {
     let currentY = $(window).scrollTop();
     let windowH = $(window).innerHeight();
+    const card = $('#vieport_side');
     let cardH = card.height();
     let offsetY = card.offset().top - parseInt(card.css('top')) - 4;
     const rcard = $('#results_card');
@@ -32,6 +32,27 @@ $(window).scroll(() => {
     }
     card.css('top', position);
     //console.log(`scrolltop: ${currentY} win height ${windowY} off: ${offsetY} card top: ${card.offset().top}`);
+};
+
+// moveScrolledTitle = () => {
+//     let currentY = $(window).scrollTop();
+//     const results_status = $('#results_status');
+//     const fcard = $('#featCard');
+//     const unseen = currentY + 50 > fcard.offset().top; // the top of results card is not visible
+//     const encarded = results_status.parent().hasClass('card-body');
+//     if (unseen && encarded) {
+//         // toast Title
+//         $('#toaster').prepend( results_status.clone() );
+//         results_status[0].id = 'former_results_status';
+//         console.log('WOOF')
+//         // card.css('position','fixed').css('padding-top', '5em').css('pointer-events','none')
+//     } else {
+//         // pass
+//     }
+// };
+
+$(window).scroll(() => {
+    moveScrolledViewport();
 });
 
 
@@ -147,6 +168,35 @@ $('#showLigands').click(event => {
     }
 );
 
+function addMikeOptions(definitions) {
+        changeByPage_selector.removeAttribute("disabled");
+        //$('#changeByPage_selector').html('');
+        const namer = v => v.name === undefined ? v.value : v.name;
+        changeByPage_selector.innerHTML = definitions.map((v, i) => `<option name="changeByPage" value="${namer(v)}">${i + 1}. ${namer(v)} (${v.type})</option>`).join('\n');
+    }
+
+function fetchMike(uuid, params) {
+        // '#createMike' does not provide a uuid.
+        $.post({
+            url: "save_pdb", data: {
+                uuid: uuid,
+                index: -1
+            }
+        }).fail(ops.addErrorToast)
+            .done(msg => {
+                if (msg.number === undefined) {
+                    ops.addToast('mike_error',
+                        'Page info retrieval error',
+                        msg.status,
+                        'bg-warning')
+                } else {
+                    addMikeOptions(msg.definitions)
+                }
+
+            });
+    }
+
+
 $('#changeByPage_fetch').click(event => {
     const uuid = changeByPage.value.trim().split('/').pop();
     if (uuid === '') {
@@ -155,7 +205,7 @@ $('#changeByPage_fetch').click(event => {
     } else {
         $('#changeByPage').removeClass('is-invalid');
     }
-    window.venus.fetchMike(uuid);
+    fetchMike(uuid);
 });
 
 /// this is very confusing. change_model is the button in change_modal
@@ -198,6 +248,13 @@ $('#change_model').click(async event => {
     }
     $('#change_modal').modal('hide');
 });
+
+$('#save').click(function () {
+    if (NGL.stageIds.viewport === undefined) {alert('There is no protein loaded.')}
+    else {
+        NGL.getStage('viewport').makeImage({trim: true, antialias: false, transparent: false, factor:10}).then(NGL.download);
+    }
+    });
 
 
 //</%text>

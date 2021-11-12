@@ -1,5 +1,5 @@
 import json, pickle
-import markdown, re
+import markdown, re, datetime
 
 from pyramid.view import view_config
 from pyramid.renderers import render_to_response
@@ -105,6 +105,9 @@ def get_userdata(request, pagename):
             settings['revisions'] = []
         user = request.user
         settings['user'] = user
+        # touch it. Although loading touches it. This is like double tapping.
+        page.timestamp = datetime.datetime.utcnow()
+        # log visit
         if user:
             if pagename not in user.owned.pages:
                 user.visited.add(pagename)
@@ -242,14 +245,15 @@ def monitor(request):
                          'meta_url': 'https://michelanglo.sgc.ox.ac.uk/'
                          }
     verdict = permission(request, page, 'view', key_label='key')
+    monitor_folder = os.path.join(request.registry.settings['michelanglo.user_data_folder'], 'monitor')
     if verdict['status'] != 'OK':
         request.response.status_int = 400
         return render_to_response("../templates/404.mako", response_settings, request)
     elif 'image' in request.params:
             if 'current' in request.params and is_js_true(request.params['current']):
-                file = os.path.join('michelanglo_app', 'user-data-monitor', f"tmp_{page.identifier}-{request.params['image']}.png")
+                file = os.path.join(monitor_folder, f"tmp_{page.identifier}-{request.params['image']}.png")
             else:
-                file = os.path.join('michelanglo_app','user-data-monitor',f"{page.identifier}-{request.params['image']}.png")
+                file = os.path.join(monitor_folder,f"{page.identifier}-{request.params['image']}.png")
             if page.protected and os.path.exists(file):
                 return FileResponse(file)
             else:
@@ -258,29 +262,43 @@ def monitor(request):
     elif not page.protected:
         return {'status': 'unprotected', **response_settings}
     else:
-        labelfile = os.path.join('michelanglo_app','user-data-monitor', page.identifier+'.json') ## this is not within hth pickle as nodejs makes it.
-        verdictfile = os.path.join('michelanglo_app','user-data-monitor', 'verdict_'+page.identifier+'.p')
+        labelfile = os.path.join(monitor_folder, page.identifier+'.json')
+        ## this is not within hth pickle as nodejs makes it.
+        verdictfile = os.path.join(monitor_folder, 'verdict_'+page.identifier+'.p')
         if os.path.exists(labelfile):
             labels = json.load(open(labelfile))
             if os.path.exists(verdictfile):
                 validity = pickle.load(open(verdictfile, 'rb'))
-                return {'status': 'monitoring', 'labels': labels, 'validity': validity, **response_settings}
+                return {'status': 'monitoring',
+                        'labels': labels,
+                        'validity': validity,
+                        **response_settings}
             else:
-                return {'status': 'monitoring', 'labels': labels, 'validity': [None for l in labels], **response_settings}
+                return {'status': 'monitoring',
+                        'labels': labels,
+                        'validity': [None for l in labels],
+                        **response_settings}
         else:
-            return {'status': 'generating', **response_settings}
+            return {'status': 'generating',
+                    **response_settings}
 
 @view_config(route_name='userthumb')
 def thumbnail(request):
     pagename = request.matchdict['id']
     page = Page.select(request.dbsession, pagename)
     verdict = permission(request, page, 'view', key_label='key')
+    # under most conditions the following should be `michelanglo_app`
+    michelanglo_app_folder = os.path.split(os.path.split(__file__)[0])[0]
+    cmd = ' '.join([f'USER_DATA={request.registry.settings["michelanglo.user_data_folder"]}',
+                    'PORT=8088',
+                    f'PUPPETEER_CHROME={request.registry.settings["puppeteer.executablepath"]}',
+                    f'node {michelanglo_app_folder}/thumbnail.js {pagename}'])
     if verdict['status'] != 'OK' or not page.existant:
         request.response.status = 200 # we would block facebook and twitter otherwise as they redirect.
         response = FileResponse(os.path.join('michelanglo_app', 'static', 'tim_barrel.png'))
     elif os.path.exists(page.thumb_path):
         response = FileResponse(page.thumb_path)
-    elif not os.system(f'node michelanglo_app/thumbnail.js {pagename}'):
+    elif not os.system(cmd) and os.path.exists(page.thumb_path):  # system exit 0
         response = FileResponse(page.thumb_path)
     else:
         log.error(f'Thumbnail generation failed for {pagename}')

@@ -7,9 +7,6 @@ import io
 import re
 import json
 
-
-PyMolTranspiler.tmp = os.path.join('michelanglo_app', 'temp')
-
 from .common_methods import is_js_true,\
                              is_malformed,\
                              PDBMeta,\
